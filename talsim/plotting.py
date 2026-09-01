@@ -112,7 +112,9 @@ def four_panel_from_summary(summary, out_path: str | Path) -> None:
     ax.legend()
 
     ax = axes[0][1]
-    ax.plot(list(x), df["ending_after_tax_wealth_median"] / 1e6, "o-", color="black", label="Median")
+    ax.plot(
+        list(x), df["ending_after_tax_wealth_median"] / 1e6, "o-", color="black", label="Median"
+    )
     ax.fill_between(
         list(x),
         df["ending_after_tax_wealth_p10"] / 1e6,

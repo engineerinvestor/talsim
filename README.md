@@ -84,8 +84,10 @@ from talsim import ScenarioConfig, run_path
 
 cfg = ScenarioConfig(long_exposure=1.5, short_exposure=0.5, alpha_annual=0.0)
 r = run_path(cfg, seed=7)
-print(f"wealth ${r.ending_after_tax_wealth:,.0f}, TE {r.tracking_error:.1%}, "
-      f"turnover {r.annual_turnover:.1f}x, washed ${r.disallowed_wash_losses:,.0f}")
+print(
+    f"wealth ${r.ending_after_tax_wealth:,.0f}, TE {r.tracking_error:.1%}, "
+    f"turnover {r.annual_turnover:.1f}x, washed ${r.disallowed_wash_losses:,.0f}"
+)
 # wealth $2,186,938, TE 11.1%, turnover 2.3x, washed $240,928
 ```
 
