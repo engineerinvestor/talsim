@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use talsim in academic work, please cite it as below."
+title: "talsim: a research simulator for tax-aware long-short portfolio strategies"
+type: software
+authors:
+  - name: "Engineer Investor"
+version: 0.2.0
+date-released: 2026-09-01
+url: "https://github.com/engineerinvestor/talsim"
+repository-code: "https://github.com/engineerinvestor/talsim"
+license: MIT
+keywords:
+  - tax-loss-harvesting
+  - long-short
+  - portfolio-simulation
+  - after-tax-investing
+  - monte-carlo

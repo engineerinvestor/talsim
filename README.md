@@ -1,5 +1,9 @@
 # talsim
 
+[![CI](https://github.com/engineerinvestor/talsim/actions/workflows/ci.yml/badge.svg)](https://github.com/engineerinvestor/talsim/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+
 A research simulator for **tax-aware long-short (TALS)** portfolio strategies: lot-level tax accounting with enforced wash sales, long/short financing costs, leverage, margin response, full liquidation, and Monte Carlo outcome distributions on a synthetic market.
 
 The question it exists to answer: **when does additional long-short leverage create usable after-tax value, and when does it merely create more turnover, risk, cost, and deferred tax?**
@@ -8,6 +12,33 @@ The question it exists to answer: **when does additional long-short leverage cre
 > and its tax accounting is a documented approximation. Results are
 > conditional on stated assumptions and are not evidence about any real
 > strategy. Do not use this for personal financial decisions.
+
+## Results at a glance
+
+The headline experiment: five books from long-only to 250/150 traded on the
+same 200 simulated market paths, zero manager alpha, $1M for 10 years, full
+liquidation at the end. Leverage multiplies harvested losses and still loses
+the race after netting, costs, risk, and the terminal tax bill:
+
+![Leverage sweep: losses grow, wealth falls, costs and risk compound](docs/leverage_sweep.png)
+
+| Book | Median after-tax wealth | Paired diff vs 100/0 | Paths beating 100/0 | Gross losses | Tax benefit used |
+|---|---:|---:|---:|---:|---:|
+| 100/0 | $1.62M | — | — | $0.67M | $91k |
+| 130/30 | $1.44M | −$192k | 24% | $1.93M | $117k |
+| 150/50 | $1.32M | −$285k | 19% | $2.44M | $126k |
+| 200/100 | $1.11M | −$496k | 17% | $3.50M | $149k |
+| 250/150 | $0.90M | −$634k | 14% | $4.07M | $151k |
+
+Medians across 200 common-random-number paths, seed 7 (250/150 is
+infeasible at FINRA maintenance floors and runs at ~0.91 scale). 6.1x the
+gross losses buy 1.7x the usable tax benefit. Every number regenerates from
+`python -m talsim.cli sweep --paths 200 --seed 7`; the summary, path-level
+results, and manifest behind this table are committed under
+[`docs/results/`](docs/results/), and the figure rebuilds with
+`python examples/make_readme_figure.py docs/results/leverage_sweep.csv`.
+These are synthetic research results conditional on stated assumptions, not
+evidence about any real strategy.
 
 ## What it is
 
@@ -34,9 +65,28 @@ pytest            # 42 tests, including regression tests for past accounting def
 from talsim import ScenarioConfig, run_sweep
 
 cfg = ScenarioConfig()  # $1M, 10y, quarterly, zero alpha, top 2026 federal rates
-sweeps = run_sweep(cfg, ["100/0", "130/30", "150/50", "200/100", "250/150"], n_paths=200)
+sweeps = run_sweep(cfg, ["100/0", "130/30"], n_paths=50)
 for s in sweeps:
-    print(s.book, round(s.median("ending_after_tax_wealth")), s.deficiency_probability())
+    print(
+        s.book,
+        f"median wealth ${s.median('ending_after_tax_wealth'):,.0f}",
+        f"gross losses ${s.median('gross_losses_realized'):,.0f}",
+        f"benefit used ${s.median('tax_benefit_used'):,.0f}",
+    )
+# 100/0  median wealth $1,726,759 gross losses $662,392   benefit used $91,417
+# 130/30 median wealth $1,508,928 gross losses $1,997,230 benefit used $119,115
+```
+
+Single-path inspection, with every assumption in one config object:
+
+```python
+from talsim import ScenarioConfig, run_path
+
+cfg = ScenarioConfig(long_exposure=1.5, short_exposure=0.5, alpha_annual=0.0)
+r = run_path(cfg, seed=7)
+print(f"wealth ${r.ending_after_tax_wealth:,.0f}, TE {r.tracking_error:.1%}, "
+      f"turnover {r.annual_turnover:.1f}x, washed ${r.disallowed_wash_losses:,.0f}")
+# wealth $2,186,938, TE 11.1%, turnover 2.3x, washed $240,928
 ```
 
 Or from the command line:
@@ -106,6 +156,27 @@ liquidation tax); margin deficiencies now force deleveraging with a
 persistent exposure scale. Results produced by 0.1.0 should be discarded.
 
 **0.1.0** — Initial release.
+
+## Citation
+
+If you use talsim in academic work, please cite it:
+
+```bibtex
+@software{talsim,
+  author  = {{Engineer Investor}},
+  title   = {talsim: a research simulator for tax-aware long-short
+             portfolio strategies},
+  year    = {2026},
+  version = {0.2.0},
+  url     = {https://github.com/engineerinvestor/talsim},
+  license = {MIT},
+  note    = {Synthetic-market research software; results are conditional
+             on configured assumptions}
+}
+```
+
+A machine-readable [`CITATION.cff`](CITATION.cff) is included, so GitHub's
+"Cite this repository" button produces the same reference.
 
 ## License
 

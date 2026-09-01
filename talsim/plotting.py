@@ -81,3 +81,80 @@ def four_panel(sweeps: list[SweepResult], out_path: str | Path) -> None:
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
+
+
+def four_panel_from_summary(summary, out_path: str | Path) -> None:
+    """Build the four-panel report from a leverage_sweep.csv summary frame,
+    so the committed figure always matches the committed results."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    df = summary
+    books = list(df["book"])
+    x = range(len(books))
+
+    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+    fig.suptitle("Tax-aware long-short leverage tradeoffs (synthetic Monte Carlo, zero alpha)")
+
+    ax = axes[0][0]
+    width = 0.28
+    for offset, col, label in [
+        (-width, "gross_losses_realized_median", "Gross losses realized"),
+        (0.0, "disallowed_wash_losses_median", "Wash-disallowed (to basis)"),
+        (width, "tax_benefit_used_median", "Tax benefit used"),
+    ]:
+        ax.bar([i + offset for i in x], df[col] / 1e6, width, label=label)
+    ax.set_ylabel("$M over horizon (median)")
+    ax.set_title("Loss realization vs. what it was worth")
+    ax.set_xticks(list(x), books)
+    ax.legend()
+
+    ax = axes[0][1]
+    ax.plot(list(x), df["ending_after_tax_wealth_median"] / 1e6, "o-", color="black", label="Median")
+    ax.fill_between(
+        list(x),
+        df["ending_after_tax_wealth_p10"] / 1e6,
+        df["ending_after_tax_wealth_p90"] / 1e6,
+        alpha=0.2,
+        label="10th-90th percentile",
+    )
+    ax.axhline(1.0, linestyle="--", color="gray")
+    ax.set_ylabel("Terminal after-tax wealth, $M")
+    ax.set_title("After-tax wealth vs. leverage, full liquidation")
+    ax.set_xticks(list(x), books)
+    ax.legend()
+
+    ax = axes[1][0]
+    bottom = [0.0] * len(books)
+    for col, label in [
+        ("management_fees_median", "Management fee"),
+        ("borrow_costs_median", "Short borrow"),
+        ("transaction_costs_median", "Trading"),
+        ("payments_in_lieu_median", "Payments in lieu"),
+        ("debit_interest_median", "Debit interest"),
+    ]:
+        vals = list(df[col] / 1e3)
+        ax.bar(list(x), vals, bottom=bottom, label=label)
+        bottom = [b + v for b, v in zip(bottom, vals, strict=True)]
+    ax.set_ylabel("Cumulative cost, $k (median)")
+    ax.set_title("Observable costs compound with gross exposure")
+    ax.set_xticks(list(x), books)
+    ax.legend()
+
+    ax = axes[1][1]
+    ax.plot(list(x), df["tracking_error_median"] * 100, "o-", label="Tracking error, %")
+    ax.plot(list(x), -df["max_drawdown_median"] * 100, "s-", label="Max drawdown, %")
+    ax.plot(list(x), df["prob_beats_baseline"] * 100, "^-", label="Paths beating 100/0, %")
+    ax.set_ylabel("Percent")
+    ax.set_title("Risk up, odds of beating long-only down")
+    ax.set_xticks(list(x), books)
+    ax.legend()
+
+    for row in axes:
+        for a in row:
+            a.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)

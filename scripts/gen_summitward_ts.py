@@ -1,4 +1,4 @@
-"""Generate web/src/lib/talsim-results.ts from talsim result CSVs."""
+"""Generate web/src/lib/talsim-results.ts from talsim v0.2 result CSVs."""
 
 import json
 from pathlib import Path
@@ -22,7 +22,8 @@ for _, r in sweep.iterrows():
             "wealthP90": round(float(r["ending_after_tax_wealth_p90"])),
             "cagrMedian": round(float(r["after_tax_cagr_median"]), 4),
             "grossLosses": round(float(r["gross_losses_realized_median"])),
-            "netLosses": round(float(r["net_loss_pre_liquidation_median"])),
+            "disallowedWashLosses": round(float(r["disallowed_wash_losses_median"])),
+            "netRealized": round(float(r["net_realized_pre_liquidation_median"])),
             "benefitUsed": round(float(r["tax_benefit_used_median"])),
             "liquidationTax": round(float(r["liquidation_tax_median"])),
             "trackingError": round(float(r["tracking_error_median"]), 4),
@@ -32,30 +33,36 @@ for _, r in sweep.iterrows():
             "borrow": round(float(r["borrow_costs_median"])),
             "trading": round(float(r["transaction_costs_median"])),
             "paymentsInLieu": round(float(r["payments_in_lieu_median"])),
-            "marginCallProb": round(float(r["margin_call_probability"]), 4),
+            "dividendTaxes": round(float(r["dividend_taxes_median"])),
+            "debitInterest": round(float(r["debit_interest_median"])),
+            "deficiencyProb": round(float(r["maintenance_deficiency_probability"]), 4),
+            "finalExposureScale": round(float(r["final_exposure_scale_median"]), 3),
+            "wealthDiffVsBaseline": round(float(r["wealth_diff_vs_baseline_median"])),
+            "probBeatsBaseline": round(float(r["prob_beats_baseline"]), 3),
         }
     )
 
 scenario_rows = []
-scenario_path = RESULTS / "scenario_comparison.csv"
-if scenario_path.exists():
-    scen = pd.read_csv(scenario_path)
-    for _, r in scen.iterrows():
-        scenario_rows.append(
-            {
-                "scenario": r["scenario"],
-                "gross": round(float(r["gross_exposure"]), 2),
-                "wealthMedian": round(float(r["ending_after_tax_wealth_median"])),
-                "benefitUsed": round(float(r["tax_benefit_used_median"])),
-                "marginCallProb": round(float(r["margin_call_probability"]), 4),
-            }
-        )
+scen = pd.read_csv(RESULTS / "scenario_comparison.csv")
+for _, r in scen.iterrows():
+    scenario_rows.append(
+        {
+            "scenario": r["scenario"],
+            "gross": round(float(r["gross_exposure"]), 2),
+            "wealthMedian": round(float(r["ending_after_tax_wealth_median"])),
+            "benefitUsed": round(float(r["tax_benefit_used_median"])),
+            "wealthDiffVsBaseline": round(float(r["wealth_diff_vs_baseline_median"])),
+            "probBeatsBaseline": round(float(r["prob_beats_baseline"]), 3),
+        }
+    )
 
 header = f"""// GENERATED from talsim result CSVs; do not hand-edit numbers.
-// Source: talsim v{manifest["talsim_version"]} leverage sweep
-// ({manifest["paths"]} common-random-number paths, base seed {manifest["base_seed"]},
-// quarterly steps, 10 years, 36 synthetic assets, zero alpha, full liquidation).
-// Regenerate: python -m talsim.cli sweep/scenarios, then scripts/gen_talsim_ts.py.
+// Source: talsim v{manifest["talsim_version"]} (git {manifest["git_commit"][:9]})
+// leverage sweep: {manifest["paths"]} common-random-number paths, base seed
+// {manifest["base_seed"]}; scenarios: 100 paths each. Quarterly steps, 10 years,
+// 36 synthetic assets, zero alpha unless labeled, full liquidation.
+// Regenerate: python -m talsim.cli sweep/scenarios, then
+// scripts/gen_summitward_ts.py in the talsim repo.
 
 export interface TalsimBookSummary {{
   book: string;
@@ -65,7 +72,8 @@ export interface TalsimBookSummary {{
   wealthP90: number;
   cagrMedian: number;
   grossLosses: number;
-  netLosses: number;
+  disallowedWashLosses: number;
+  netRealized: number;
   benefitUsed: number;
   liquidationTax: number;
   trackingError: number;
@@ -75,7 +83,12 @@ export interface TalsimBookSummary {{
   borrow: number;
   trading: number;
   paymentsInLieu: number;
-  marginCallProb: number;
+  dividendTaxes: number;
+  debitInterest: number;
+  deficiencyProb: number;
+  finalExposureScale: number;
+  wealthDiffVsBaseline: number;
+  probBeatsBaseline: number;
 }}
 
 export interface TalsimScenarioPoint {{
@@ -83,13 +96,15 @@ export interface TalsimScenarioPoint {{
   gross: number;
   wealthMedian: number;
   benefitUsed: number;
-  marginCallProb: number;
+  wealthDiffVsBaseline: number;
+  probBeatsBaseline: number;
 }}
 
 export const TALSIM_RUN = {{
   version: "{manifest["talsim_version"]}",
+  gitCommit: "{manifest["git_commit"][:9]}",
   sweepPaths: {manifest["paths"]},
-  scenarioPaths: 40,
+  scenarioPaths: 100,
   baseSeed: {manifest["base_seed"]},
   startingCapital: 1_000_000,
   years: 10,
