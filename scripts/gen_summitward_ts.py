@@ -6,10 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 RESULTS = Path.home() / "Documents/code/talsim/results"
-OUT = (
-    Path.home()
-    / "Documents/code/net-worth-tracker/web/src/lib/talsim-results.ts"
-)
+OUT = Path.home() / "Documents/code/net-worth-tracker/web/src/lib/talsim-results.ts"
 
 sweep = pd.read_csv(RESULTS / "leverage_sweep.csv")
 manifest = json.loads((RESULTS / "leverage_sweep_manifest.json").read_text())

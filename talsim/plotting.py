@@ -21,7 +21,7 @@ def four_panel(sweeps: list[SweepResult], out_path: str | Path) -> None:
 
     ax = axes[0][0]
     gross = [s.median("gross_losses_realized") for s in sweeps]
-    net = [s.median("net_loss_pre_liquidation") for s in sweeps]
+    net = [max(-s.median("net_realized_pre_liquidation"), 0.0) for s in sweeps]
     width = 0.38
     ax.bar(
         [i - width / 2 for i in x], [g / 1e6 for g in gross], width, label="Gross losses realized"
@@ -66,10 +66,10 @@ def four_panel(sweeps: list[SweepResult], out_path: str | Path) -> None:
     ax = axes[1][1]
     te = [s.median("tracking_error") * 100 for s in sweeps]
     dd = [-s.median("max_drawdown") * 100 for s in sweeps]
-    mc = [s.margin_call_probability() * 100 for s in sweeps]
+    mc = [s.deficiency_probability() * 100 for s in sweeps]
     ax.plot(list(x), te, "o-", label="Tracking error, %")
     ax.plot(list(x), dd, "s-", label="Max drawdown, %")
-    ax.plot(list(x), mc, "^-", label="Margin-breach paths, %")
+    ax.plot(list(x), mc, "^-", label="Maintenance-deficiency paths, %")
     ax.set_ylabel("Percent")
     ax.set_title("Risk and forced-sale exposure rise with leverage")
     ax.set_xticks(list(x), books)

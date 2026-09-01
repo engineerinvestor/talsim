@@ -68,11 +68,25 @@ class ScenarioConfig:
     # Harvesting policy
     harvest_threshold: float = 0.02  # realize a lot's loss when >2% below basis
     rebalance_band: float = 0.005  # ignore target drift smaller than 0.5% NAV
+    wash_window_days: int = 30  # statutory window; rounded UP to whole steps
+    # A side never harvests itself below this fraction of its exposure
+    # target: when every short is at a loss at once, realizing them all
+    # would flatten the book for a wash window. Smallest losses defer first.
+    harvest_exposure_floor: float = 0.6
 
-    # Margin model: deliberately simplified, strategy-level maintenance test
-    # (FINRA Rule 4210 floor levels; brokers set higher house requirements).
+    # Financing: negative cash accrues debit interest; positive cash earns
+    # cash_rate (default zero, a deliberate conservatism).
+    debit_rate: float = 0.06
+    cash_rate: float = 0.0
+
+    # Margin model: strategy-level maintenance test at FINRA Rule 4210 floor
+    # levels (brokers set higher house requirements). When breached, the
+    # engine force-deleverages proportionally (with taxes and trading costs)
+    # instead of flagging and continuing on impossible capital.
     long_maintenance: float = 0.25
     short_maintenance: float = 0.30
+    margin_response: str = "deleverage"  # "deleverage" | "flag"
+    deleverage_buffer: float = 0.98  # restore equity to req/buffer coverage
 
     def __post_init__(self) -> None:
         if self.starting_capital <= 0:
@@ -88,6 +102,10 @@ class ScenarioConfig:
         for rate in (self.st_rate, self.lt_rate, self.ordinary_rate):
             if not 0 <= rate < 1:
                 raise ValueError("tax rates must be in [0, 1)")
+        if self.margin_response not in ("deleverage", "flag"):
+            raise ValueError("margin_response must be 'deleverage' or 'flag'")
+        if self.wash_window_days < 1:
+            raise ValueError("wash_window_days must be >= 1")
 
     @property
     def gross_exposure(self) -> float:

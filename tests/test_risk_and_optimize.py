@@ -53,11 +53,13 @@ def test_target_weights_hit_exposures_long_short():
     assert w[np.argmin(signal)] < 0
 
 
-def test_target_weights_long_only_never_short():
+def test_target_weights_long_only_is_equal_weight():
+    # The 100/0 baseline is a passive equal-weight harvesting portfolio;
+    # giving it a signal tilt would contaminate the leverage comparison.
     rng = np.random.default_rng(4)
     signal = rng.standard_normal(36)
     w = target_weights(signal, 1.0, 0.0)
-    assert (w >= 0).all()
+    assert np.allclose(w, 1.0 / 36)
     assert w.sum() == pytest.approx(1.0, abs=1e-9)
 
 
