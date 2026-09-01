@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "talsim"
+version = "0.1.0"
+description = "Research simulator for tax-aware long-short (TALS) portfolio strategies: lot-level tax accounting, leverage, costs, and after-tax outcome distributions on synthetic markets."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Engineer Investor (@egr_investor)" }]
+keywords = ["tax-loss-harvesting", "long-short", "portfolio", "simulation", "after-tax"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.8"]
+dev = ["pytest>=8.0", "ruff>=0.4", "matplotlib>=3.8"]
+
+[project.urls]
+Homepage = "https://github.com/engineerinvestor/talsim"
+
+[tool.setuptools.packages.find]
+include = ["talsim*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
