@@ -68,3 +68,29 @@ def test_sweep_uses_common_random_numbers():
         "ending_after_tax_wealth", 10
     )
     assert max(gaps) < spread
+
+
+def test_alpha_calibration_matches_configured_drift():
+    # With vols near zero, wealth growth is deterministic and the alpha-on
+    # minus alpha-off gap must equal the configured annual drift.
+    quiet = dict(
+        years=4,
+        n_assets=12,
+        market_vol=1e-6,
+        sector_vol=1e-6,
+        idio_vol=1e-6,
+        market_drift=0.0,
+        dividend_yield=0.0,
+        management_fee=0.0,
+        borrow_cost=0.0,
+        transaction_cost=0.0,
+        outside_st_gains_annual=0.0,
+        long_exposure=1.5,
+        short_exposure=0.5,
+    )
+    base = run_path(ScenarioConfig(**quiet), seed=1)
+    lifted = run_path(ScenarioConfig(**quiet, alpha_annual=0.02), seed=1)
+    # 2%/yr at reference active gross (150/50 = 1.0) for 4 years, pre-tax
+    # ~8.2% compounded; final-year tax on the liquidation gain trims it.
+    ratio = lifted.ending_after_tax_wealth / base.ending_after_tax_wealth
+    assert 1.04 < ratio < 1.09

@@ -116,11 +116,13 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         # 1. Market moves; short liability moves with prices.
         step_returns = path.returns[t].copy()
         if alpha_step:
-            # Drift applied to active positions in proportion to |active weight|.
+            # Per-asset drift aligned with the active weights, normalized so
+            # the portfolio-level expected active return equals alpha_step
+            # exactly: sum(w_i * added_i) = alpha_step.
             active = weights - 1.0 / cfg.n_assets
-            gross_active = np.abs(active).sum()
-            if gross_active > 0:
-                step_returns += alpha_step * active / gross_active * cfg.n_assets
+            denom = float(np.sum(weights * active))
+            if denom > 1e-12:
+                step_returns += alpha_step * active / denom
         prices = prices * (1 + step_returns)
 
         long_mv = longs.market_value(prices)
