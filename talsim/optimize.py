@@ -187,8 +187,13 @@ def plan_trades(
         basis_total = sum(target_dollars[(side, a)] for a in open_names)
         if basis_total <= 0:
             continue
+        # Cap each substitute at 2x its own target: bounded concentration,
+        # while leaving enough capacity that a heavy-harvest step does not
+        # leave the side materially under-exposed.
         for a in open_names:
-            desired_dollars[(side, a)] += deficit * target_dollars[(side, a)] / basis_total
+            add = deficit * target_dollars[(side, a)] / basis_total
+            cap = 2.0 * target_dollars[(side, a)]
+            desired_dollars[(side, a)] = min(desired_dollars[(side, a)] + add, cap)
 
     # ------------------------------------------------------------------
     # Pass 3: turn desired state into trades with band and deferral rules.

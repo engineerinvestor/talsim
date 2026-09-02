@@ -33,10 +33,13 @@ def test_hifo_sells_loss_lots_first():
 
 def test_holding_period_character():
     led = make_ledger()
-    led.open("long", 0, 10, 100.0, step=0)
-    st = led.close("long", 0, 5, 120.0, step=3)
-    lt = led.close("long", 0, 5, 120.0, step=4)
+    led.open("long", 0, 15, 100.0, step=0)
+    st = led.close("long", 0, 5, 120.0, step=3)  # 274 days
+    boundary = led.close("long", 0, 5, 120.0, step=4)  # exactly 365 days
+    lt = led.close("long", 0, 5, 120.0, step=5)  # 456 days
     assert st[0].term == "st"
+    # Pub 550: long-term means MORE than one year; exactly one year is short.
+    assert boundary[0].term == "st"
     assert lt[0].term == "lt"
 
 
@@ -74,7 +77,8 @@ def test_same_day_repurchase_disallows_the_entire_loss():
     assert recs[0].disallowed == pytest.approx(100.0)
     lot = led.longs.lots[0][0]
     assert lot.basis_per_share == pytest.approx(100.0)  # 90 + 10 transferred
-    assert lot.open_step == 0  # tacked
+    assert lot.tax_open_step == 0  # tax holding period tacks
+    assert lot.open_step == 5  # actual acquisition date is untouched
     assert led.disallowed_losses(0, 5) == pytest.approx(100.0)
 
 
@@ -90,14 +94,17 @@ def test_backward_window_purchase_is_a_replacement():
     assert recs[0].disallowed == pytest.approx(100.0)
     survivor = led.longs.lots[0][0]
     assert survivor.basis_per_share == pytest.approx(95.0 + 10.0)
-    assert survivor.open_step == 0
+    assert survivor.tax_open_step == 0  # tacked; actual date stays step 5
+    assert survivor.open_step == 5
 
 
-def test_repurchase_outside_window_keeps_the_loss():
+def test_repurchase_next_quarter_keeps_the_loss():
+    """91 days is legally outside the 30-day window. The old step-rounded
+    window disallowed this loss; the day-based comparison must not."""
     led = make_ledger()
     led.open("long", 0, 10, 100.0, step=0)
     recs = led.close("long", 0, 10, 90.0, step=4)
-    led.open("long", 0, 10, 90.0, step=6)  # window is 1 step at quarterly
+    led.open("long", 0, 10, 90.0, step=5)  # 91.25 days later
     assert recs[0].gain == pytest.approx(-100.0)
     assert recs[0].disallowed == 0.0
 
@@ -127,11 +134,15 @@ def test_short_side_wash_applies_to_reshorts():
     assert later[0].gain == pytest.approx(-100.0)
 
 
-def test_wash_window_rounds_up_for_finer_cadence():
+def test_wash_window_is_exact_days_at_any_cadence():
+    quarterly = Ledger(steps_per_year=4, wash_window_days=30)
+    assert quarterly.in_wash_window(5, 5)  # same step: 0 days
+    assert not quarterly.in_wash_window(5, 6)  # 91.25 days
     monthly = Ledger(steps_per_year=12, wash_window_days=30)
-    assert monthly.wash_window_steps == 1
+    assert not monthly.in_wash_window(3, 4)  # 30.42 days: just outside
     weekly = Ledger(steps_per_year=52, wash_window_days=30)
-    assert weekly.wash_window_steps == 5  # ceil(30 / 7.02)
+    assert weekly.in_wash_window(0, 4)  # 28.1 days
+    assert not weekly.in_wash_window(0, 5)  # 35.1 days
 
 
 def test_pil_capitalized_only_within_45_days():
@@ -169,9 +180,10 @@ def test_partial_wash_splits_replacement_lot():
     lots = sorted(led.longs.lots[0], key=lambda lot: lot.basis_per_share)
     assert len(lots) == 2
     assert lots[0].shares == pytest.approx(5) and lots[0].basis_per_share == pytest.approx(90.0)
-    assert lots[0].open_step == 4 and not lots[0].was_replacement
+    assert lots[0].tax_open_step == 4 and not lots[0].was_replacement
     assert lots[1].shares == pytest.approx(5) and lots[1].basis_per_share == pytest.approx(100.0)
-    assert lots[1].open_step == 0 and lots[1].was_replacement
+    assert lots[1].tax_open_step == 0 and lots[1].was_replacement
+    assert lots[1].open_step == 4  # actual acquisition date is preserved
 
     later = led.close("long", 0, 5, 95.0, step=8)  # HIFO picks the loss lot
     assert later[0].gain == pytest.approx(-25.0)
@@ -193,15 +205,15 @@ def test_oversized_replacement_lot_partial_match():
 
 
 def test_wash_matching_is_chronological_across_purchases():
-    """Two purchases inside the window: the earlier one absorbs first."""
+    """Two same-step purchases inside the window: the one acquired first
+    (list order) absorbs first."""
     led = make_ledger()
     led.open("long", 0, 10, 100.0, step=0)
     recs = led.close("long", 0, 10, 90.0, step=5)
     led.open("long", 0, 4, 91.0, step=5)
-    led.open("long", 0, 4, 92.0, step=6)
+    led.open("long", 0, 4, 92.0, step=5)
     assert recs[0].washed_shares == pytest.approx(8)
     by_basis = sorted(led.longs.lots[0], key=lambda lot: lot.basis_per_share)
-    # 91-basis lot bought first: fully matched (+10 transfer).
     assert by_basis[0].basis_per_share == pytest.approx(101.0)
     assert by_basis[1].basis_per_share == pytest.approx(102.0)
 
@@ -209,8 +221,8 @@ def test_wash_matching_is_chronological_across_purchases():
 def test_monthly_cadence_uses_days_not_steps():
     monthly = make_monthly_ledger()
     monthly.open("long", 0, 10, 100.0, step=0)
-    st = monthly.close("long", 0, 5, 120.0, step=11)  # ~334 days
-    lt = monthly.close("long", 0, 5, 120.0, step=12)  # ~365 days
+    st = monthly.close("long", 0, 5, 120.0, step=12)  # exactly 365 days: short
+    lt = monthly.close("long", 0, 5, 120.0, step=13)  # ~395 days: long
     assert st[0].term == "st"
     assert lt[0].term == "lt"
 
@@ -218,9 +230,25 @@ def test_monthly_cadence_uses_days_not_steps():
 def test_policy_queries():
     led = make_ledger()
     led.open("long", 0, 10, 100.0, step=4)
-    assert led.recent_open_shares("long", 0, step=5) == pytest.approx(10)
-    assert led.recent_open_shares("long", 0, step=7) == 0.0
+    # Day-based: only same-step acquisitions are within 30 days at quarterly.
+    assert led.recent_open_shares("long", 0, step=4) == pytest.approx(10)
+    assert led.recent_open_shares("long", 0, step=5) == 0.0
     led.close("long", 0, 10, 90.0, step=8)
-    assert led.loss_sale_blocked("long", 0, step=9)
-    assert not led.loss_sale_blocked("long", 0, step=11)
-    assert not led.loss_sale_blocked("short", 0, step=9)
+    assert led.loss_sale_blocked("long", 0, step=8)
+    assert not led.loss_sale_blocked("long", 0, step=9)
+    assert not led.loss_sale_blocked("short", 0, step=8)
+
+
+def test_unknown_side_rejected():
+    led = make_ledger()
+    with pytest.raises(ValueError):
+        led.book("typo")
+
+
+def test_failed_close_leaves_ledger_untouched():
+    led = make_ledger()
+    led.open("long", 0, 10, 100.0, step=0)
+    with pytest.raises(ValueError):
+        led.close("long", 0, 11, 100.0, step=1)
+    assert led.longs.shares_of(0) == pytest.approx(10)
+    assert led.realized == []

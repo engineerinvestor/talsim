@@ -1,0 +1,41 @@
+name: Generate official artifacts
+
+# Official result artifacts are produced ONLY here, in pinned CI, so their
+# manifests describe one reproducible environment instead of whichever
+# laptop last ran the sweep. Trigger manually after result-changing commits.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[plot]"
+      - run: python -m talsim.cli sweep --paths 200 --seed 7 --out results/
+      - run: python -m talsim.cli scenarios --paths 100 --seed 7 --out results/
+      - run: |
+          mkdir -p docs/results
+          cp results/*.csv results/*.json docs/results/
+          python examples/make_readme_figure.py docs/results/leverage_sweep.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: talsim-results
+          path: docs/results/
+      - name: Commit official artifacts
+        run: |
+          git config user.name "Engineer Investor"
+          git config user.email "166449067+engineerinvestor@users.noreply.github.com"
+          git add docs/results docs/leverage_sweep.png
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "Regenerate official artifacts in pinned CI
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+          git push

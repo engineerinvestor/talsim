@@ -72,7 +72,7 @@ class ScenarioConfig:
     # A side never harvests itself below this fraction of its exposure
     # target: when every short is at a loss at once, realizing them all
     # would flatten the book for a wash window. Smallest losses defer first.
-    harvest_exposure_floor: float = 0.6
+    harvest_exposure_floor: float = 0.7
 
     # Financing: negative cash accrues debit interest; positive cash earns
     # cash_rate (default zero, a deliberate conservatism).
@@ -134,6 +134,20 @@ class ScenarioConfig:
             raise ValueError("deleverage_buffer must be in (0, 1]")
         if not 0 <= self.harvest_exposure_floor <= 1:
             raise ValueError("harvest_exposure_floor must be in [0, 1]")
+        import math
+
+        for field_name, value in vars(self).items():
+            if isinstance(value, int | float) and not math.isfinite(value):
+                raise ValueError(f"{field_name} must be finite, got {value!r}")
+        if self.margin_response == "deleverage":
+            core_req = self.long_maintenance * (self.long_exposure - self.short_exposure)
+            if core_req > self.deleverage_buffer:
+                raise ValueError(
+                    "net core exposure alone violates the maintenance requirement; "
+                    "deleveraging only shrinks the long/short extension, so this "
+                    "book cannot be made compliant. Reduce net exposure or use "
+                    "margin_response='flag'."
+                )
 
     @property
     def gross_exposure(self) -> float:

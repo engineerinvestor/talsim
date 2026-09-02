@@ -98,17 +98,47 @@ def test_250_150_is_infeasible_and_runs_net_preserving_extension():
     assert abs((r.avg_long_exposure - r.avg_short_exposure) - 1.0) < 0.15
 
 
-def test_insolvency_terminates_the_path():
-    # Absurd costs guarantee ruin; the path must flag insolvency and stop
-    # rather than carry positions on negative equity.
+def test_insolvency_terminates_and_settles_the_actual_year():
+    """Find a genuinely insolvent path (extreme gross exposure in flag mode
+    with violent idiosyncratic moves) and assert the branch really ran:
+    early termination, and the terminal year's realized losses actually
+    generating benefit against that year's outside gains instead of being
+    settled against the far-future horizon year."""
     cfg = small_cfg(
-        long_exposure=2.0,
-        short_exposure=1.0,
-        management_fee=0.5,
-        borrow_cost=0.9,
+        long_exposure=4.5,
+        short_exposure=3.5,
+        idio_vol=0.5,
+        margin_response="flag",
+        outside_st_gains_annual=50_000.0,
     )
-    r = run_path(cfg, seed=1)
-    assert r.insolvent or r.ending_after_tax_wealth > 0
+    hit = None
+    for seed in range(25):
+        r = run_path(cfg, seed=seed)
+        if r.insolvent:
+            hit = r
+            break
+    assert hit is not None, "no insolvent path found; test setup too tame"
+    assert hit.termination_step < cfg.n_steps - 1
+    assert hit.gross_losses_realized > 0
+    # The terminal year settles with its own outside gains, so realized
+    # losses buy a material benefit (the pre-fix code reported ~$0).
+    assert hit.tax_benefit_used > 1_000
+    import math
+
+    for value in vars(hit).values():
+        if isinstance(value, float):
+            assert math.isfinite(value)
+
+
+def test_infeasible_net_core_is_rejected_in_deleverage_mode():
+    """A 500/0 book needs 125% of NAV in maintenance with no extension to
+    shrink; the validator must refuse it rather than let the margin
+    response silently fail."""
+    with pytest.raises(ValueError):
+        ScenarioConfig(long_exposure=5.0, short_exposure=0.0)
+    # The same book is representable in flag mode, which never claims to cure.
+    cfg = ScenarioConfig(long_exposure=5.0, short_exposure=0.0, margin_response="flag")
+    assert cfg.gross_exposure == pytest.approx(5.0)
 
 
 def test_config_validation_rejects_nonsense():
@@ -120,6 +150,8 @@ def test_config_validation_rejects_nonsense():
         dict(long_maintenance=-0.1),
         dict(deleverage_buffer=0.0),
         dict(harvest_exposure_floor=1.5),
+        dict(management_fee=float("nan")),
+        dict(outside_st_gains_annual=float("inf")),
     ):
         with pytest.raises(ValueError):
             ScenarioConfig(**bad)

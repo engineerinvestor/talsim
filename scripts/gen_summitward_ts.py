@@ -1,15 +1,39 @@
-"""Generate web/src/lib/talsim-results.ts from talsim v0.2 result CSVs."""
+"""Generate a Summitward talsim-results.ts module from result CSVs.
 
+Usage:
+    python scripts/gen_summitward_ts.py [results_dir] [output_ts_path]
+
+Validates both manifests against their CSVs' checksums before exporting,
+and reads path counts from the manifests instead of assuming them.
+"""
+
+import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
 
-RESULTS = Path.home() / "Documents/code/talsim/results"
-OUT = Path.home() / "Documents/code/net-worth-tracker/web/src/lib/talsim-results.ts"
+RESULTS = Path(sys.argv[1] if len(sys.argv) > 1 else "results")
+OUT = Path(
+    sys.argv[2]
+    if len(sys.argv) > 2
+    else Path.home() / "Documents/code/net-worth-tracker/web/src/lib/talsim-results.ts"
+)
+
+
+def load_validated(name: str) -> dict:
+    manifest = json.loads((RESULTS / f"{name}_manifest.json").read_text())
+    for fname, recorded in manifest["file_checksums"].items():
+        actual = hashlib.sha256((RESULTS / fname).read_bytes()).hexdigest()
+        if actual != recorded:
+            raise SystemExit(f"checksum mismatch for {fname}: manifest does not match file")
+    return manifest
+
 
 sweep = pd.read_csv(RESULTS / "leverage_sweep.csv")
-manifest = json.loads((RESULTS / "leverage_sweep_manifest.json").read_text())
+manifest = load_validated("leverage_sweep")
+scenario_manifest = load_validated("scenario_comparison")
 
 rows = []
 for _, r in sweep.iterrows():
@@ -61,7 +85,8 @@ for _, r in scen.iterrows():
 header = f"""// GENERATED from talsim result CSVs; do not hand-edit numbers.
 // Source: talsim v{manifest["talsim_version"]} (git {manifest["git_commit"][:9]})
 // leverage sweep: {manifest["paths"]} common-random-number paths, base seed
-// {manifest["base_seed"]}; scenarios: 100 paths each. Quarterly steps, 10 years,
+// {manifest["base_seed"]}; scenarios: {scenario_manifest["paths"]} paths each.
+// Quarterly steps, 10 years,
 // 36 synthetic assets, zero alpha unless labeled, full liquidation.
 // Regenerate: python -m talsim.cli sweep/scenarios, then
 // scripts/gen_summitward_ts.py in the talsim repo.
@@ -108,7 +133,7 @@ export const TALSIM_RUN = {{
   version: "{manifest["talsim_version"]}",
   gitCommit: "{manifest["git_commit"][:9]}",
   sweepPaths: {manifest["paths"]},
-  scenarioPaths: 100,
+  scenarioPaths: {scenario_manifest["paths"]},
   baseSeed: {manifest["base_seed"]},
   startingCapital: 1_000_000,
   years: 10,

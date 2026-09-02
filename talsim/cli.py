@@ -118,10 +118,10 @@ def path_frame(sweeps, base_seed: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _git_commit() -> str:
+def _git(args: list[str]) -> str:
     try:
         return subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", *args],
             cwd=Path(__file__).resolve().parent,
             capture_output=True,
             text=True,
@@ -129,6 +129,38 @@ def _git_commit() -> str:
         ).stdout.strip()
     except Exception:
         return "unknown"
+
+
+def _git_commit() -> str:
+    return _git(["rev-parse", "HEAD"])
+
+
+def _worktree_dirty() -> bool | str:
+    status = _git(["status", "--porcelain"])
+    if status == "unknown":
+        return "unknown"
+    return bool(status)
+
+
+def _source_tree_hash() -> str:
+    """SHA-256 over the package's own source files, in sorted order, so a
+    manifest can prove which code produced it even from a dirty worktree."""
+    digest = hashlib.sha256()
+    root = Path(__file__).resolve().parent
+    for path in sorted(root.glob("*.py")):
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def _installed_packages() -> dict[str, str]:
+    import importlib.metadata as md
+
+    return {
+        dist.metadata["Name"]: dist.version
+        for dist in sorted(md.distributions(), key=lambda d: d.metadata["Name"] or "")
+        if dist.metadata["Name"]
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -145,8 +177,13 @@ def write_manifest(
     manifest = {
         "talsim_version": __version__,
         "git_commit": _git_commit(),
+        "worktree_dirty": _worktree_dirty(),
+        "source_tree_sha256": _source_tree_hash(),
         "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
         "numpy_version": np.__version__,
+        "installed_packages": _installed_packages(),
         "command": name,
         "paths": args.paths,
         "base_seed": args.seed,

@@ -9,9 +9,10 @@ violation never manufactures a deductible loss.
 Wash-sale mechanics, per the shape of IRC 1091 and IRS Publication 550:
 
 - A loss is disallowed to the extent substantially identical shares are
-  acquired within the window before or after the sale (the statute's 30
-  days; here a configurable number of steps derived from the simulation
-  cadence, always rounded up so the model never under-blocks).
+  acquired within the window before or after the sale. The window is an
+  exact elapsed-day comparison (30 days by default): at a quarterly
+  cadence a same-step replacement is inside the window, while the next
+  quarter, 91 days later, is legally outside it.
 - Matching is share-for-share in acquisition order. When only part of a
   replacement lot matches, the lot is SPLIT: the matched shares become
   their own lot carrying the transferred basis and the tacked holding
@@ -20,8 +21,9 @@ Wash-sale mechanics, per the shape of IRC 1091 and IRS Publication 550:
 
 Payments in lieu of dividends on short positions accrue per lot. When a
 short is closed, its accrued payments in lieu are capitalized into the
-basis of the shares used to close only if the short was held 45 days or
-less (Pub 550); payments on longer-held shorts get no tax benefit here,
+basis of the shares used to close only if the short was actually open 45
+days or less (Pub 550), measured on the real open date even when a wash
+match tacked the tax holding clock; longer-held payments get no benefit,
 a deliberate conservatism until an investment-interest deduction bucket
 (with its own limitations) exists.
 
@@ -40,7 +42,6 @@ Simplifications, stated plainly:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 PIL_CAPITALIZATION_MAX_DAYS = 45.0
@@ -51,12 +52,23 @@ class Lot:
     asset: int
     shares: float  # always positive; side is carried by the book
     basis_per_share: float  # for shorts, the sale price received at open
+    # Actual acquisition (or short-open) step. Drives the wash-sale window,
+    # the PIL 45-day test, and dividend qualification: things that depend on
+    # how long THESE shares were really held.
     open_step: int
+    # Tax holding-period start. Equal to open_step unless a wash-sale match
+    # tacked an earlier lot's holding period onto this one. Drives
+    # long/short-term character only.
+    tax_open_step: int = -(10**9)  # sentinel; set in __post_init__
     # True once this lot's shares have served as wash-sale replacements;
     # a share can absorb a wash only once.
     was_replacement: bool = False
     # Accrued payments in lieu of dividends (short lots only).
     pil_accrued: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.tax_open_step == -(10**9):
+            self.tax_open_step = self.open_step
 
 
 @dataclass
@@ -69,7 +81,7 @@ class Realized:
     gain: float  # after any wash disallowance
     term: str  # "st" | "lt"
     step: int
-    open_step: int
+    open_step: int  # the closed lot's tax holding-period start (tacking chains)
     disallowed: float = 0.0  # wash-disallowed loss, stored positive
     washed_shares: float = 0.0  # loss shares already matched to replacements
 
@@ -119,17 +131,30 @@ class Ledger:
     def __init__(self, steps_per_year: int, wash_window_days: int = 30) -> None:
         self.steps_per_year = steps_per_year
         self.step_days = 365.0 / steps_per_year
-        # Round up: the model may over-block, never under-block.
-        self.wash_window_steps = max(1, math.ceil(wash_window_days / self.step_days))
+        self.wash_window_days = float(wash_window_days)
         self.longs = LotBook("long", steps_per_year)
         self.shorts = LotBook("short", steps_per_year)
         self.realized: list[Realized] = []
 
     def book(self, side: str) -> LotBook:
-        return self.longs if side == "long" else self.shorts
+        if side == "long":
+            return self.longs
+        if side == "short":
+            return self.shorts
+        raise ValueError(f"unknown side {side!r}; expected 'long' or 'short'")
 
     def held_days(self, lot: Lot, step: int) -> float:
+        """Actual elapsed days since acquisition (never the tacked clock)."""
         return (step - lot.open_step) * self.step_days
+
+    def tax_held_days(self, lot: Lot, step: int) -> float:
+        return (step - lot.tax_open_step) * self.step_days
+
+    def in_wash_window(self, earlier_step: int, later_step: int) -> bool:
+        """Exact elapsed-day comparison: 30 days means 30 days, whatever the
+        cadence. At quarterly steps, a same-step replacement is inside the
+        window and the following quarter (91.25 days) is outside it."""
+        return (later_step - earlier_step) * self.step_days <= self.wash_window_days
 
     # ------------------------------------------------------------------
     # Trade entry points
@@ -145,7 +170,7 @@ class Ledger:
         # to the window edge, then process forward chronologically.
         recent: list[Realized] = []
         for rec in reversed(self.realized):
-            if step - rec.step > self.wash_window_steps:
+            if not self.in_wash_window(rec.step, step):
                 break
             if rec.asset == asset and rec.side == side:
                 recent.append(rec)
@@ -177,6 +202,13 @@ class Ledger:
         inventory = book.lots.get(asset, [])
         if not inventory:
             raise KeyError(f"no {side} lots for asset {asset}")
+        available = sum(lot.shares for lot in inventory)
+        if shares > available + 1e-9:
+            # Validate BEFORE mutating anything: a failed close must leave
+            # the ledger exactly as it found it.
+            raise ValueError(
+                f"tried to close {shares} shares of asset {asset}, only {available} held"
+            )
 
         def pil_ps(lot: Lot) -> float:
             """Capitalizable payments in lieu per share (shorts, <=45 days)."""
@@ -205,12 +237,13 @@ class Ledger:
             if side == "long":
                 proceeds = take * price
                 basis = take * lot.basis_per_share
-                term = "lt" if self.held_days(lot, step) >= 365.0 else "st"
+                # Pub 550: long-term means held MORE than one year.
+                term = "lt" if self.tax_held_days(lot, step) > 365.0 else "st"
             else:
                 proceeds = take * lot.basis_per_share
                 basis = take * (price + extra_ps)
                 term = "st"
-            rec = Realized(asset, side, take, proceeds, basis, gain, term, step, lot.open_step)
+            rec = Realized(asset, side, take, proceeds, basis, gain, term, step, lot.tax_open_step)
             # Accrued PIL leaves with the shares whether or not capitalized.
             if lot.shares > 0:
                 lot.pil_accrued *= max(0.0, 1 - take / lot.shares)
@@ -219,10 +252,8 @@ class Ledger:
             self.realized.append(rec)
             out.append(rec)
         book.lots[asset] = [lot for lot in inventory if lot.shares > 1e-12]
-        if remaining > 1e-9:
-            raise ValueError(
-                f"tried to close {shares} shares of asset {asset}, only {shares - remaining} held"
-            )
+        if remaining > 1e-9:  # unreachable after prevalidation
+            raise AssertionError("inventory accounting drifted during close")
         # Wash matching runs after the whole close: a mid-loop lot split
         # would move shares into lots invisible to the sorted selection
         # view above. All of this close's sales share one step, so the
@@ -247,7 +278,7 @@ class Ledger:
                 break
             if lot.shares <= 1e-12 or lot.was_replacement:
                 continue
-            if step - lot.open_step > self.wash_window_steps:
+            if not self.in_wash_window(lot.open_step, step):
                 continue
             self._match(side, asset, lot, rec)
 
@@ -277,16 +308,18 @@ class Ledger:
         inventory = self.book(side).lots.setdefault(asset, [])
         if match >= lot.shares - 1e-12:
             lot.basis_per_share += basis_shift
-            lot.open_step = min(lot.open_step, rec.open_step)
+            lot.tax_open_step = min(lot.tax_open_step, rec.open_step)
             lot.was_replacement = True
             return lot
-        # Split: the matched sublot inherits a proportional share of any
-        # accrued payments in lieu.
+        # Split: the matched sublot keeps the ACTUAL acquisition date (for
+        # the wash window, PIL, and dividend clocks) while its TAX clock
+        # tacks; it inherits a proportional share of any payments in lieu.
         matched = Lot(
             asset,
             match,
             lot.basis_per_share + basis_shift,
-            min(lot.open_step, rec.open_step),
+            lot.open_step,
+            tax_open_step=min(lot.tax_open_step, rec.open_step),
             was_replacement=True,
             pil_accrued=lot.pil_accrued * match / lot.shares,
         )
@@ -303,12 +336,12 @@ class Ledger:
         return sum(
             lot.shares
             for lot in self.book(side).lots.get(asset, [])
-            if step - lot.open_step <= self.wash_window_steps and not lot.was_replacement
+            if self.in_wash_window(lot.open_step, step) and not lot.was_replacement
         )
 
     def loss_sale_blocked(self, side: str, asset: int, step: int) -> bool:
         for rec in reversed(self.realized):
-            if step - rec.step > self.wash_window_steps:
+            if not self.in_wash_window(rec.step, step):
                 break
             if rec.asset == asset and rec.side == side and rec.gain - rec.disallowed < 0:
                 return True

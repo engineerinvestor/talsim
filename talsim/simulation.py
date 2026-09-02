@@ -76,6 +76,7 @@ class PathResult:
     deleverage_events: int
     extension_scale: float  # effective L/S extension vs configured (1.0 = full)
     insolvent: bool
+    termination_step: int  # last simulated step (n_steps - 1 unless insolvent)
     avg_long_exposure: float
     avg_short_exposure: float
     max_net_exposure_error: float
@@ -110,6 +111,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     min_margin_ratio = np.inf
     deficiency_observed = False
     insolvent = False
+    terminal_step = cfg.n_steps - 1
     deleverage_events = 0
     max_exposure_error = 0.0
     long_exposures: list[float] = []
@@ -150,8 +152,8 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
 
     # Initial build (at the feasible extension).
     build_weights = target_weights(path.signals[0], eff_long, eff_short)
-    plan = plan_trades(cfg, build_weights, cfg.starting_capital, prices, ledger, step=0)
-    _, traded0, cash_delta = execute_plan(plan, prices, ledger, step=0)
+    plan = plan_trades(cfg, build_weights, cfg.starting_capital, prices, ledger, step=-1)
+    _, traded0, cash_delta = execute_plan(plan, prices, ledger, step=-1)
     state.cash += cash_delta
     cost0 = traded0 * cfg.transaction_cost
     state.cash -= cost0
@@ -276,7 +278,24 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
                 break
             traded_forced, cost_forced = close_sides(long_frac, short_frac, t)
             txn += cost_forced
+            if traded_forced <= 1e-6:
+                deleverage_events -= 1  # nothing traded; not a real response
+                break
+        if cfg.margin_response == "deleverage" and not insolvent:
+            nav = nav_now()
+            if nav > 0:
+                long_mv = ledger.longs.market_value(prices)
+                short_mv = ledger.shorts.market_value(prices)
+                requirement = cfg.long_maintenance * long_mv + cfg.short_maintenance * short_mv
+                # Small residuals below the 1%-of-side trade threshold are
+                # tolerated; anything larger means the response failed,
+                # which is unreachable for configs the validator accepts.
+                if nav < requirement - 0.02 * nav:
+                    raise AssertionError(
+                        "deleverage response ended non-compliant; the net core is infeasible"
+                    )
         if insolvent:
+            terminal_step = t
             break
 
         # 6. NAV bookkeeping.
@@ -321,15 +340,18 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             year_qual_div = year_ord_div = 0.0
 
     # ------------------------------------------------------------------
-    # Full liquidation at the horizon.
+    # Full liquidation at the terminal step: the horizon normally, or the
+    # insolvency step when the path ended early. Settlement uses the year
+    # that step actually belongs to, and no artificial holding time is
+    # granted beyond it.
     # ------------------------------------------------------------------
-    final_year = cfg.years - 1
+    final_year = terminal_step // cfg.steps_per_year
     fy0 = final_year * cfg.steps_per_year
-    pre_liq_st, pre_liq_lt = ledger.realized_totals(fy0, cfg.n_steps - 1)
-    gross_losses_pre_liq = ledger.gross_losses(0, cfg.n_steps - 1)
+    pre_liq_st, pre_liq_lt = ledger.realized_totals(fy0, terminal_step)
+    gross_losses_pre_liq = ledger.gross_losses(-1, terminal_step)
     net_realized_pre_liq += pre_liq_st + pre_liq_lt
 
-    liq_step = cfg.n_steps
+    liq_step = terminal_step + 1 if insolvent else cfg.n_steps
     liq_traded, liq_cost = close_sides(1.0, 1.0, liq_step)
     txn += liq_cost
     if not ledger.is_empty():
@@ -338,6 +360,8 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     st_final, lt_final = ledger.realized_totals(fy0, liq_step)
     gross_losses_liq = ledger.gross_losses(liq_step, liq_step)
     outside = cfg.outside_st_gain_for_year(final_year)
+    # Earlier full years were already settled inside the loop; on an early
+    # termination nothing after final_year exists to settle.
 
     final = settle_year(
         st_final,
@@ -415,6 +439,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         deleverage_events=deleverage_events,
         extension_scale=extension_scale,
         insolvent=insolvent,
+        termination_step=terminal_step,
         avg_long_exposure=float(np.mean(long_exposures)) if long_exposures else 0.0,
         avg_short_exposure=float(np.mean(short_exposures)) if short_exposures else 0.0,
         max_net_exposure_error=max_exposure_error,

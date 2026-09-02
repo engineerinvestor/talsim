@@ -8,7 +8,7 @@ A research simulator for **tax-aware long-short (TALS)** portfolio strategies: l
 
 The question it exists to answer: **when does additional long-short leverage create usable after-tax value, and when does it merely create more turnover, risk, cost, and deferred tax?**
 
-> **Status: v0.3.0, experimental research software.** The engine is synthetic
+> **Status: v0.4.0, experimental research software.** The engine is synthetic
 > and its tax accounting is a documented approximation. Results are
 > conditional on stated assumptions and are not evidence about any real
 > strategy. Do not use this for personal financial decisions.
@@ -33,16 +33,19 @@ the race after netting, costs, risk, and the terminal tax bill:
 Medians across 200 common-random-number paths, seed 7 (250/150 is
 infeasible at FINRA percentage floors and runs net-preserving at roughly
 233/133). 7.3x the gross losses buy 2.4x the usable tax benefit. Every number regenerates from
-`python -m talsim.cli sweep --paths 200 --seed 7`; the summary, path-level
-results, and manifest behind this table are committed under
-[`docs/results/`](docs/results/), and the figure rebuilds with
+`python -m talsim.cli sweep --paths 200 --seed 7` on the same platform; the
+summary, path-level results, and manifest behind this table are committed
+under [`docs/results/`](docs/results/) and regenerated in pinned CI, and the
+figure rebuilds with
 `python examples/make_readme_figure.py docs/results/leverage_sweep.csv`.
+The 200-path probabilities are demonstration-scale, not inferential
+evidence; paired p10/p90 ranges ship in the summary CSV.
 These are synthetic research results conditional on stated assumptions, not
 evidence about any real strategy.
 
 ## What it is
 
-- A deterministic, seed-reproducible research engine. Same config + seed = same result, always.
+- A deterministic research engine: same config + seed + environment = same result. Floating-point behavior varies across platforms and BLAS builds and can cross discrete trade thresholds, so official artifacts are generated only in pinned CI (see `.github/workflows/artifacts.yml`), and every manifest records the commit, worktree state, source-tree hash, platform, and full installed-package list that produced it.
 - An accounting-first design: the `Ledger` is independent of the trading policy and enforces wash-sale disallowance itself, so any trade list, compliant or not, is accounted correctly.
 - Zero-alpha by default. With any positive alpha assumption a leverage comparison silently becomes an alpha study; here alpha is an explicit input, defaulted to zero.
 
@@ -110,9 +113,9 @@ More harvested losses are not more wealth. Every report distinguishes:
 4. **Tax benefit used**: the household tax actually saved against outside gains plus the $3,000 ordinary offset; the only number that deserves to be called a benefit.
 5. **Liquidation tax**: the incremental household tax caused by the terminal unwind, measured against settling the final year without liquidating.
 
-## Model mechanics (v0.2.0)
+## Model mechanics (v0.4.0)
 
-- **Wash sales are enforced in the ledger**, both directions of the window, share-matched **in acquisition order with lot splitting**: when only part of a replacement lot matches, the matched shares become their own sublot carrying the transferred basis and tacked holding period, while unmatched shares keep their original basis and date. Short-side replacements have the deferred loss subtracted from their basis (sale proceeds), never added. The window is expressed in steps, always rounded up. The policy layer independently avoids washes: it will not harvest a freshly bought name, it waits out the window before re-entering, redistributes blocked exposure to substitute names (capped per name), and risk-driven reductions of recent buys sell gain lots first.
+- **Wash sales are enforced in the ledger**, both directions of the window, share-matched **in acquisition order with lot splitting**: when only part of a replacement lot matches, the matched shares become their own sublot carrying the transferred basis and a tacked TAX holding clock, while their actual acquisition date (which drives the wash window, the PIL 45-day test, and dividend qualification) is preserved separately. Short-side replacements have the deferred loss subtracted from their basis (sale proceeds), never added. **The window is an exact elapsed-day comparison**: at quarterly cadence a same-step repurchase washes and the next quarter, 91 days later, legally does not. Long-term character requires MORE than 365 days, per Pub 550. The policy layer independently avoids washes: it will not harvest a freshly bought name, it waits out the window before re-entering, redistributes blocked exposure to substitute names (capped at 2x each name's own target), and risk-driven reductions of recent buys sell gain lots first.
 - **Exposure is constructed from post-trade state per side**, never signed drift, so short-to-long transitions land on target. A harvest floor prevents a side from flattening itself when every position is at a loss at once. Realized net exposure error is recorded per path.
 - **Dividends are ordinary income**, split qualified/non-qualified by a day-based holding test (61 days, a proxy for the statutory 60-days-in-121 rule, correct at any cadence), taxed annually in their own buckets; capital losses never absorb them beyond the statutory ordinary offset. **Payments in lieu accrue per short lot** and are capitalized into cover basis only when the short is closed within 45 days (Pub 550); longer-held PIL gets no tax benefit, a deliberate conservatism until an investment-interest bucket exists.
 - **Negative cash accrues debit interest** (default 6%); positive cash earns a configurable rate (default zero, deliberately conservative).
@@ -144,7 +147,26 @@ talsim/
   cli.py          # reproducible runs, path-level output, provenance manifests
 ```
 
+## Documentation
+
+API documentation is published from the module docstrings at
+**https://engineerinvestor.github.io/talsim/** on every push to master.
+
 ## Changelog
+
+**0.4.0** — Third correctness release. The wash-sale window is now an
+exact elapsed-day comparison (the previous step-rounded window disallowed
+legal 91-day repurchases at quarterly cadence, materially suppressing
+harvests and inflating the leverage penalty); actual acquisition, tacked
+tax holding, and PIL clocks are separate fields; long-term character
+requires more than 365 days; early insolvency liquidates at its actual
+step and settles its actual year (with a real regression test replacing a
+vacuous one); configurations whose net core is infeasible at maintenance
+floors are rejected in deleverage mode; ledger operations validate inputs
+before mutating and reject unknown sides; all config values must be
+finite; manifests record worktree state, source hash, platform, and full
+package versions; official artifacts move to pinned CI. Results produced
+by 0.3.0 should be discarded.
 
 **0.3.0** — Second correctness release following a follow-up external
 review. Partial wash-sale matches now SPLIT replacement lots (matched

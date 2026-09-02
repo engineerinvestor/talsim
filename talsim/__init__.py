@@ -9,7 +9,7 @@ from .config import BOOK_PRESETS, ScenarioConfig
 from .lots import Ledger
 from .simulation import PathResult, SweepResult, run_path, run_sweep
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "BOOK_PRESETS",
