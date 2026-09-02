@@ -119,6 +119,17 @@ talsim scenarios --paths 100 --seed 7 --out results/
 
 Each run writes a summary CSV, a **path-level CSV** (every path, with its seed, so any statistic can be recomputed), and a manifest recording the package version, git commit, Python and NumPy versions, the full config of every scenario, and SHA-256 checksums of the outputs. The sweep summary includes **paired differences versus 100/0 on common random numbers** (median difference and probability of beating the baseline), which are far more informative than medians alone.
 
+### Summitward export
+
+The interactive calculator in Summitward's [TALS simulator guide](https://summitward.com/learn/tals-leverage-simulator#worth-it) reads a precomputed grid rather than running the engine live:
+
+```bash
+python scripts/run_grid.py --paths 100 --seed 7 --workers 12 --out results/
+python scripts/gen_summitward_grid.py results/            # writes web/src/lib/talsim-grid.ts
+```
+
+`run_grid.py` spans book x outside-gains ratio x cost tier x alpha x horizon x federal bracket at a $1M reference capital (180 cells, 900 book-cells) and writes the same summary, path-level, and manifest files as the CLI. `gen_summitward_ts.py` does the same for the static charts from `sweep` and `scenarios` output. Both exporters refuse to run if a manifest checksum does not match its CSV.
+
 ## Tutorial
 
 A short notebook walks through the API end to end: one path, the five
