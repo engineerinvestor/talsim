@@ -37,11 +37,11 @@ def ledoit_wolf_cov(returns: np.ndarray) -> np.ndarray:
     x = x - x.mean(axis=0)
     s = x.T @ x / t
     mu = np.trace(s) / n
-    d2 = np.linalg.norm(s - mu * np.eye(n), "fro") ** 2
+    d2 = float(np.linalg.norm(s - mu * np.eye(n), "fro")) ** 2
     b2_sum = 0.0
     for i in range(t):
         xi = x[i][:, None]
-        b2_sum += np.linalg.norm(xi @ xi.T - s, "fro") ** 2
+        b2_sum += float(np.linalg.norm(xi @ xi.T - s, "fro")) ** 2
     b2 = min(b2_sum / t**2, d2)
     shrink = b2 / d2 if d2 > 0 else 1.0
     return shrink * mu * np.eye(n) + (1 - shrink) * s
