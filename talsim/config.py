@@ -68,7 +68,7 @@ class ScenarioConfig:
     # Harvesting policy
     harvest_threshold: float = 0.02  # realize a lot's loss when >2% below basis
     rebalance_band: float = 0.005  # ignore target drift smaller than 0.5% NAV
-    wash_window_days: int = 30  # statutory window; rounded UP to whole steps
+    wash_window_days: int = 30  # statutory window, compared in exact elapsed days
     # A side never harvests itself below this fraction of its exposure
     # target: when every short is at a loss at once, realizing them all
     # would flatten the book for a wash window. Smallest losses defer first.
@@ -124,6 +124,8 @@ class ScenarioConfig:
             "cash_rate",
             "harvest_threshold",
             "rebalance_band",
+            "ordinary_offset_limit",
+            "outside_st_gains_annual",
         ):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must be non-negative")
@@ -139,6 +141,21 @@ class ScenarioConfig:
         for field_name, value in vars(self).items():
             if isinstance(value, int | float) and not math.isfinite(value):
                 raise ValueError(f"{field_name} must be finite, got {value!r}")
+        # The event schedule is a dict, so the scalar checks above never see
+        # its contents: validate every key and value explicitly.
+        for year, amount in self.outside_st_gain_events.items():
+            if isinstance(year, bool) or not isinstance(year, int):
+                raise ValueError(f"outside_st_gain_events keys must be int years, got {year!r}")
+            if not 0 <= year < self.years:
+                raise ValueError(
+                    f"outside_st_gain_events year {year} is outside the horizon [0, {self.years})"
+                )
+            if isinstance(amount, bool) or not isinstance(amount, int | float):
+                raise ValueError(f"outside_st_gain_events[{year}] must be a number, got {amount!r}")
+            if not math.isfinite(amount):
+                raise ValueError(f"outside_st_gain_events[{year}] must be finite, got {amount!r}")
+            if amount < 0:
+                raise ValueError(f"outside_st_gain_events[{year}] must be non-negative")
         if self.margin_response == "deleverage":
             core_req = self.long_maintenance * (self.long_exposure - self.short_exposure)
             if core_req > self.deleverage_buffer:

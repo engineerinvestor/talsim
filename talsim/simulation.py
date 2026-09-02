@@ -340,10 +340,14 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             year_qual_div = year_ord_div = 0.0
 
     # ------------------------------------------------------------------
-    # Full liquidation at the terminal step: the horizon normally, or the
-    # insolvency step when the path ended early. Settlement uses the year
-    # that step actually belongs to, and no artificial holding time is
-    # granted beyond it.
+    # Full liquidation AT the terminal step: the last simulated step
+    # normally, or the insolvency step when the path ended early. The
+    # unwind shares that step's timestamp, so inception lots on an
+    # exactly-one-year horizon have been held exactly 365 days (short
+    # term) rather than one extra period. Liquidation records are
+    # identified by position in the ledger, not by step, because the
+    # final rebalance shares the same step. Settlement uses the year the
+    # terminal step actually belongs to.
     # ------------------------------------------------------------------
     final_year = terminal_step // cfg.steps_per_year
     fy0 = final_year * cfg.steps_per_year
@@ -351,14 +355,16 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     gross_losses_pre_liq = ledger.gross_losses(-1, terminal_step)
     net_realized_pre_liq += pre_liq_st + pre_liq_lt
 
-    liq_step = terminal_step + 1 if insolvent else cfg.n_steps
+    liq_step = terminal_step
+    n_records_pre_liq = len(ledger.realized)
     liq_traded, liq_cost = close_sides(1.0, 1.0, liq_step)
     txn += liq_cost
     if not ledger.is_empty():
         raise AssertionError("ledger not empty after full liquidation")
+    liq_records = ledger.realized[n_records_pre_liq:]
 
     st_final, lt_final = ledger.realized_totals(fy0, liq_step)
-    gross_losses_liq = ledger.gross_losses(liq_step, liq_step)
+    gross_losses_liq = sum(-rec.gain for rec in liq_records if rec.gain < 0)
     outside = cfg.outside_st_gain_for_year(final_year)
     # Earlier full years were already settled inside the loop; on an early
     # termination nothing after final_year exists to settle.
@@ -419,7 +425,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         after_tax_cagr=cagr,
         gross_losses_realized=gross_losses_pre_liq,
         gross_losses_liquidation=gross_losses_liq,
-        disallowed_wash_losses=ledger.disallowed_losses(0, liq_step),
+        disallowed_wash_losses=ledger.disallowed_losses(-1, liq_step),
         net_realized_pre_liquidation=net_realized_pre_liq,
         tax_benefit_used=benefit_used_total,
         unused_loss_carry=final.carry_st + final.carry_lt,

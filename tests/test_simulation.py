@@ -152,9 +152,22 @@ def test_config_validation_rejects_nonsense():
         dict(harvest_exposure_floor=1.5),
         dict(management_fee=float("nan")),
         dict(outside_st_gains_annual=float("inf")),
+        dict(outside_st_gains_annual=-1.0),
+        dict(ordinary_offset_limit=-3000.0),
+        dict(outside_st_gain_events={0: float("nan")}),
+        dict(outside_st_gain_events={0: float("inf")}),
+        dict(outside_st_gain_events={0: -1.0}),
+        dict(outside_st_gain_events={-1: 5.0}),
+        dict(outside_st_gain_events={10: 5.0}),
+        dict(outside_st_gain_events={"a": 5.0}),
+        dict(outside_st_gain_events={True: 5.0}),
+        dict(outside_st_gain_events={0: "5"}),
     ):
         with pytest.raises(ValueError):
             ScenarioConfig(**bad)
+    # A valid event schedule still constructs.
+    cfg = ScenarioConfig(outside_st_gain_events={2: 500_000.0})
+    assert cfg.outside_st_gain_for_year(2) == pytest.approx(600_000.0)
 
 
 def test_flag_mode_still_reports_deficiency():
@@ -169,13 +182,100 @@ def test_flag_mode_still_reports_deficiency():
 # ---------------------------------------------------------------------------
 
 
-def test_gross_losses_split_pre_liquidation_from_liquidation():
+def _spy_on_closes(monkeypatch):
+    """Record every ledger close (step and realized records) during a run."""
+    from talsim.lots import Ledger
+
+    calls: list[tuple[int, list]] = []
+    original = Ledger.close
+
+    def spy(self, side, asset, shares, price, step, prefer_gains=False):
+        out = original(self, side, asset, shares, price, step, prefer_gains)
+        calls.append((step, out))
+        return out
+
+    monkeypatch.setattr(Ledger, "close", spy)
+    return calls
+
+
+def test_gross_losses_split_pre_liquidation_from_liquidation(monkeypatch):
+    calls = _spy_on_closes(monkeypatch)
     cfg = small_cfg()
     r = run_path(cfg, seed=9)
     assert r.gross_losses_realized >= 0
     assert r.gross_losses_liquidation >= 0
     assert r.ending_after_tax_wealth > 0
     assert r.tax_benefit_used >= 0
+    # The unwind is the tail of the close sequence at the terminal step:
+    # one close per (side, asset) still held, each taking the whole position.
+    last_step = cfg.n_steps - 1
+    tail = [recs for step, recs in calls if step == last_step]
+    n_liq = sum(1 for step, _ in calls if step == last_step) - sum(
+        1 for step, recs in calls if step == last_step and not recs
+    )
+    assert n_liq > 0
+    liq_recs = [rec for recs in tail for rec in recs]
+    # Everything closed at the terminal step (rebalance and unwind) is
+    # either pre-liquidation or liquidation, never both.
+    all_recs = [rec for _, recs in calls for rec in recs]
+    total_losses = sum(-rec.gain for rec in all_recs if rec.gain < 0)
+    assert r.gross_losses_realized + r.gross_losses_liquidation == pytest.approx(total_losses)
+    assert r.gross_losses_liquidation <= sum(-rec.gain for rec in liq_recs if rec.gain < 0) + 1e-6
+
+
+def test_liquidation_occurs_at_terminal_step(monkeypatch):
+    """Inception lots open at step -1 and the loop ends at n_steps - 1, so
+    the unwind must share that step. On an exactly-one-year horizon the
+    inception lots have been held exactly 365 days: short term, per Pub
+    550's "more than one year". Before the fix the unwind was stamped one
+    step later and every such lot was long term after 456 days."""
+    calls = _spy_on_closes(monkeypatch)
+
+    def inception_longs_closed_at(step):
+        return [
+            rec
+            for s, recs in calls
+            if s == step
+            for rec in recs
+            if rec.side == "long" and rec.open_step == -1
+        ]
+
+    cfg = small_cfg(years=1, steps_per_year=4, harvest_threshold=10.0)
+    r = run_path(cfg, seed=3)
+    assert not r.insolvent
+    assert max(step for step, _ in calls) == cfg.n_steps - 1 == 3
+    liq_longs = inception_longs_closed_at(3)
+    assert liq_longs, "no inception long lots survived to liquidation"
+    assert {rec.term for rec in liq_longs} == {"st"}
+
+    # One more year and the same lots are long term (730 days > 365).
+    calls.clear()
+    cfg2 = small_cfg(years=2, steps_per_year=4, harvest_threshold=10.0)
+    run_path(cfg2, seed=3)
+    assert max(step for step, _ in calls) == 7
+    liq_longs = inception_longs_closed_at(7)
+    assert liq_longs and {rec.term for rec in liq_longs} == {"lt"}
+
+
+def test_insolvent_path_liquidates_at_termination_step(monkeypatch):
+    calls = _spy_on_closes(monkeypatch)
+    cfg = small_cfg(
+        long_exposure=4.5,
+        short_exposure=3.5,
+        idio_vol=0.5,
+        margin_response="flag",
+        outside_st_gains_annual=50_000.0,
+    )
+    hit = None
+    for seed in range(25):
+        calls.clear()
+        r = run_path(cfg, seed=seed)
+        if r.insolvent:
+            hit = r
+            break
+    assert hit is not None, "no insolvent path found; test setup too tame"
+    assert hit.termination_step < cfg.n_steps - 1
+    assert max(step for step, _ in calls) == hit.termination_step
 
 
 def test_sweep_uses_common_random_numbers():
