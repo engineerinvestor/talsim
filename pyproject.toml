@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 # Distribution name differs from the import name: PyPI rejects "talsim" as
 # too similar to the unrelated existing project "taisim".
 name = "pytalsim"
-version = "0.4.0"
+version = "0.4.1"
 description = "Research simulator for tax-aware long-short (TALS) portfolio strategies: lot-level tax accounting, leverage, costs, and after-tax outcome distributions on synthetic markets."
 readme = "README.md"
 requires-python = ">=3.10"

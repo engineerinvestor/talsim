@@ -4,8 +4,8 @@ title: "talsim: a research simulator for tax-aware long-short portfolio strategi
 type: software
 authors:
   - name: "Engineer Investor"
-version: 0.4.0
-date-released: 2026-09-01
+version: 0.4.1
+date-released: 2026-09-02
 url: "https://github.com/engineerinvestor/talsim"
 repository-code: "https://github.com/engineerinvestor/talsim"
 license: MIT

@@ -11,7 +11,7 @@ A research simulator for **tax-aware long-short (TALS)** portfolio strategies: l
 
 The question it exists to answer: **when does additional long-short leverage create usable after-tax value, and when does it merely create more turnover, risk, cost, and deferred tax?**
 
-> **Status: v0.4.0, experimental research software.** The engine is synthetic
+> **Status: v0.4.1, experimental research software.** The engine is synthetic
 > and its tax accounting is a documented approximation. Results are
 > conditional on stated assumptions and are not evidence about any real
 > strategy. Do not use this for personal financial decisions.
@@ -55,7 +55,7 @@ evidence about any real strategy.
 
 ## What it is
 
-- A deterministic research engine: same config + seed + environment = same result. Floating-point behavior varies across platforms and BLAS builds and can cross discrete trade thresholds, so official artifacts are generated only in pinned CI (runner image, CPython patch version, and numeric stack fixed in `.github/workflows/artifacts.yml` and `requirements-artifacts.txt`), and every manifest records the commit, worktree state, source-tree hash, platform, and full installed-package list that produced it.
+- A deterministic research engine: same config + seed + environment = same result, serial or parallel (`--jobs N` splits paths across processes and returns identical numbers). Floating-point behavior varies across platforms and BLAS builds and can cross discrete trade thresholds, so official artifacts are generated only in pinned CI (runner image, CPython patch version, and numeric stack fixed in `.github/workflows/artifacts.yml` and `requirements-artifacts.txt`), and every manifest records the commit, worktree state, source-tree hash, platform, and full installed-package list that produced it.
 - An accounting-first design: the `Ledger` is independent of the trading policy and enforces wash-sale disallowance itself, so any trade list, compliant or not, is accounted correctly.
 - Zero-alpha by default. With any positive alpha assumption a leverage comparison silently becomes an alpha study; here alpha is an explicit input, defaulted to zero.
 
@@ -122,7 +122,8 @@ talsim sweep --paths 200 --seed 7 --out results/
 talsim scenarios --paths 100 --seed 7 --out results/
 ```
 
-(`python -m talsim.cli` is equivalent to the `talsim` command.)
+(`python -m talsim.cli` is equivalent to the `talsim` command. Add `--jobs N`
+to run paths on N processes; results do not depend on it.)
 
 Each run writes a summary CSV, a **path-level CSV** (every path, with its seed, so any statistic can be recomputed), and a manifest recording the package version, git commit, Python and NumPy versions, the full config of every scenario, and SHA-256 checksums of the outputs. The sweep summary includes **paired differences versus 100/0 on common random numbers** (median difference and probability of beating the baseline), which are far more informative than medians alone.
 
@@ -161,7 +162,7 @@ More harvested losses are not more wealth. Every report distinguishes:
 4. **Tax benefit used**: the household tax actually saved against outside gains plus the $3,000 ordinary offset; the only number that deserves to be called a benefit.
 5. **Liquidation tax**: the incremental household tax caused by the terminal unwind, measured against settling the final year without liquidating.
 
-## Model mechanics (v0.4.0)
+## Model mechanics (v0.4.1)
 
 - **Wash sales are enforced in the ledger**, both directions of the window, share-matched **in acquisition order with lot splitting**: when only part of a replacement lot matches, the matched shares become their own sublot carrying the transferred basis and a tacked TAX holding clock, while their actual acquisition date (which drives the wash window, the PIL 45-day test, and dividend qualification) is preserved separately. Short-side replacements have the deferred loss subtracted from their basis (sale proceeds), never added. **The window is an exact elapsed-day comparison**: at quarterly cadence a same-step repurchase washes and the next quarter, 91 days later, legally does not. Long-term character requires MORE than 365 days, per Pub 550. The policy layer independently avoids washes: it will not harvest a freshly bought name, it waits out the window before re-entering, redistributes blocked exposure to substitute names (capped at 2x each name's own target), and risk-driven reductions of recent buys sell gain lots first.
 - **Exposure is constructed from post-trade state per side**, never signed drift, so short-to-long transitions land on target. A harvest floor prevents a side from flattening itself when every position is at a loss at once. Realized net exposure error is recorded per path.
@@ -204,6 +205,14 @@ API documentation is published from the module docstrings at
 **https://engineerinvestor.github.io/talsim/** on every push to master.
 
 ## Changelog
+
+**0.4.1** — Performance release; results unchanged. `target_weights`
+evaluates its scale grid in one vectorized pass (same grid and
+tie-breaking, outputs bitwise identical to 0.4.0, verified against the
+previous implementation in the test suite); `run_sweep` gains `n_jobs` and
+the CLI gains `--jobs` for process-parallel paths with identical results;
+official artifacts run with four jobs. A leveraged path is about three
+times faster and sweeps scale with cores.
 
 **0.4.0** — Third correctness release. The wash-sale window is now an
 exact elapsed-day comparison (the previous step-rounded window disallowed
@@ -259,7 +268,7 @@ If you use talsim in academic work, please cite it:
   title   = {talsim: a research simulator for tax-aware long-short
              portfolio strategies},
   year    = {2026},
-  version = {0.4.0},
+  version = {0.4.1},
   url     = {https://github.com/engineerinvestor/talsim},
   license = {MIT},
   note    = {Synthetic-market research software; results are conditional
