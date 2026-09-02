@@ -10,7 +10,7 @@
       "debit_rate": 0.06,
       "deleverage_buffer": 0.98,
       "dividend_yield": 0.013,
-      "harvest_exposure_floor": 0.6,
+      "harvest_exposure_floor": 0.7,
       "harvest_threshold": 0.02,
       "idio_vol": 0.25,
       "long_exposure": 1.0,
@@ -40,12 +40,32 @@
     }
   },
   "file_checksums": {
-    "leverage_sweep.csv": "c18e8e37b3d14d59a69b1b9dff5792626f30d92405d16ad1a724873c5d629dd7",
-    "leverage_sweep_paths.csv": "1237fdd70163f37f166e95d39caac6cec4bc3a2febb0a980f403dc7684cf010b"
+    "leverage_sweep.csv": "d5624a3aac7f09185ea2e13601b60858c53b122b2ff0212f4a149714264fee24",
+    "leverage_sweep_paths.csv": "e943efa9c2d8d451fe2cd7f47582b2c546b3578342984ba74c875dc720a2fc90"
   },
-  "git_commit": "5e24df8e8e16159ba210da5f8f22b0a786f016f9",
+  "git_commit": "97cda8751ed7cec69ff4b2f3bdb7d9d2c089ab5b",
+  "installed_packages": {
+    "contourpy": "1.3.3",
+    "cycler": "0.12.1",
+    "fonttools": "4.64.0",
+    "kiwisolver": "1.5.1",
+    "matplotlib": "3.11.1",
+    "numpy": "2.5.2",
+    "packaging": "26.3",
+    "pandas": "3.0.5",
+    "pillow": "12.3.0",
+    "pip": "26.2.1",
+    "pyparsing": "3.3.2",
+    "pytalsim": "0.4.0",
+    "python-dateutil": "2.9.0.post0",
+    "six": "1.17.0"
+  },
+  "machine": "x86_64",
   "numpy_version": "2.5.2",
   "paths": 200,
-  "python_version": "3.12.11",
-  "talsim_version": "0.3.0"
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "python_version": "3.12.14",
+  "source_tree_sha256": "0bb79639e9c2ebf6300615bb972b0a25f5e45a7d5f46b8eeec55119cc0773f89",
+  "talsim_version": "0.4.0",
+  "worktree_dirty": false
 }
