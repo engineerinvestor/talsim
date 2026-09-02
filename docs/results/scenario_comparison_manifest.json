@@ -189,7 +189,7 @@
     "scenario_comparison.csv": "256af8eaea52cd5f65d7dcaaac6ee42298e479e1e294e21f6395e0c8bde466a1",
     "scenario_comparison_paths.csv": "ec07efa699299c3ddc248553eeb0f10596dd18a7d1cda4d35672eea1dc46f650"
   },
-  "git_commit": "97cda8751ed7cec69ff4b2f3bdb7d9d2c089ab5b",
+  "git_commit": "d8098d1c270f8bf13311060b502d399c8da042c3",
   "installed_packages": {
     "contourpy": "1.3.3",
     "cycler": "0.12.1",
@@ -202,16 +202,17 @@
     "pillow": "12.3.0",
     "pip": "26.2.1",
     "pyparsing": "3.3.2",
-    "pytalsim": "0.4.0",
+    "pytalsim": "0.4.1",
     "python-dateutil": "2.9.0.post0",
     "six": "1.17.0"
   },
+  "jobs": 4,
   "machine": "x86_64",
   "numpy_version": "2.5.2",
   "paths": 100,
   "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
   "python_version": "3.12.14",
-  "source_tree_sha256": "0bb79639e9c2ebf6300615bb972b0a25f5e45a7d5f46b8eeec55119cc0773f89",
-  "talsim_version": "0.4.0",
+  "source_tree_sha256": "2c7a5b3fcdca2eaf7863160e40199a51b93e9df7bacce17e7b7b96f59066eb5a",
+  "talsim_version": "0.4.1",
   "worktree_dirty": false
 }
