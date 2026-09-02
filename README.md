@@ -1,9 +1,10 @@
 # talsim
 
 [![CI](https://github.com/engineerinvestor/talsim/actions/workflows/ci.yml/badge.svg)](https://github.com/engineerinvestor/talsim/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/engineerinvestor/talsim/blob/master/LICENSE)
+[![Docs](https://github.com/engineerinvestor/talsim/actions/workflows/docs.yml/badge.svg)](https://engineerinvestor.github.io/talsim/)
 [![PyPI](https://img.shields.io/pypi/v/pytalsim.svg)](https://pypi.org/project/pytalsim/)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+[![Python](https://img.shields.io/pypi/pyversions/pytalsim.svg)](https://pypi.org/project/pytalsim/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/engineerinvestor/talsim/blob/master/LICENSE)
 
 A research simulator for **tax-aware long-short (TALS)** portfolio strategies: lot-level tax accounting with enforced wash sales, long/short financing costs, leverage, margin response, full liquidation, and Monte Carlo outcome distributions on a synthetic market.
 
@@ -25,15 +26,15 @@ the race after netting, costs, risk, and the terminal tax bill:
 
 | Book | Median after-tax wealth | Paired diff vs 100/0 | Paths beating 100/0 | Gross losses | Tax benefit used |
 |---|---:|---:|---:|---:|---:|
-| 100/0 | $1.62M | — | — | $0.67M | $91k |
-| 130/30 | $1.49M | −$167k | 28% | $2.10M | $126k |
-| 150/50 | $1.43M | −$184k | 27% | $2.73M | $145k |
-| 200/100 | $1.27M | −$332k | 22% | $4.16M | $180k |
-| 250/150 | $1.10M | −$400k | 23% | $4.90M | $220k |
+| 100/0 | $1.62M | — | — | $0.77M | $111k |
+| 130/30 | $1.50M | −$118k | 29% | $2.43M | $157k |
+| 150/50 | $1.40M | −$165k | 26% | $3.15M | $185k |
+| 200/100 | $1.26M | −$324k | 26% | $4.70M | $235k |
+| 250/150 | $1.13M | −$427k | 19% | $5.54M | $263k |
 
 Medians across 200 common-random-number paths, seed 7 (250/150 is
 infeasible at FINRA percentage floors and runs net-preserving at roughly
-233/133). 7.3x the gross losses buy 2.4x the usable tax benefit. Every number regenerates from
+233/133). 7.2x the gross losses buy 2.4x the usable tax benefit. Every number regenerates from
 `python -m talsim.cli sweep --paths 200 --seed 7` on the same platform; the
 summary, path-level results, and manifest behind this table are committed
 under [`docs/results/`](https://github.com/engineerinvestor/talsim/tree/master/docs/results) and regenerated in pinned CI, and the
@@ -88,8 +89,8 @@ for s in sweeps:
         f"gross losses ${s.median('gross_losses_realized'):,.0f}",
         f"benefit used ${s.median('tax_benefit_used'):,.0f}",
     )
-# 100/0  median wealth $1,726,759 gross losses $662,392   benefit used $91,417
-# 130/30 median wealth $1,536,264 gross losses $2,153,987 benefit used $123,435
+# 100/0  median wealth $1,722,303 gross losses $751,035   benefit used $109,473
+# 130/30 median wealth $1,585,744 gross losses $2,562,042 benefit used $157,310
 ```
 
 Single-path inspection, with every assumption in one config object:
@@ -103,7 +104,7 @@ print(
     f"wealth ${r.ending_after_tax_wealth:,.0f}, TE {r.tracking_error:.1%}, "
     f"turnover {r.annual_turnover:.1f}x, washed ${r.disallowed_wash_losses:,.0f}"
 )
-# wealth $2,304,833, TE 10.9%, turnover 2.3x, washed $147,564
+# wealth $2,393,151, TE 9.7%, turnover 3.0x, washed $0
 ```
 
 Or from the command line:
