@@ -119,6 +119,8 @@ talsim scenarios --paths 100 --seed 7 --out results/
 
 Each run writes a summary CSV, a **path-level CSV** (every path, with its seed, so any statistic can be recomputed), and a manifest recording the package version, git commit, Python and NumPy versions, the full config of every scenario, and SHA-256 checksums of the outputs. The sweep summary includes **paired differences versus 100/0 on common random numbers** (median difference and probability of beating the baseline), which are far more informative than medians alone.
 
+`scripts/bootstrap_intervals.py` reads the path-level CSVs and writes `*_intervals.csv` beside them: a 95% bootstrap interval for each paired median difference and a Wilson interval for each win probability. These are sampling intervals within the model, not model error.
+
 ### Summitward export
 
 The interactive calculator in Summitward's [TALS simulator guide](https://summitward.com/learn/tals-leverage-simulator#worth-it) reads a precomputed grid rather than running the engine live:

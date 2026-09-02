@@ -31,9 +31,31 @@ def load_validated(name: str) -> dict:
     return manifest
 
 
+def load_intervals(name: str) -> dict:
+    """Paired-comparison intervals from scripts/bootstrap_intervals.py, if present."""
+    path = RESULTS / f"{name}_intervals.csv"
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path, keep_default_na=False)
+    return {(str(r["scenario"]), str(r["book"])): r for _, r in df.iterrows()}
+
+
+def ci_fields(row) -> dict:
+    if row is None:
+        return {}
+    return {
+        "wealthDiffCiLo": round(float(row["wealth_diff_ci_lo"])),
+        "wealthDiffCiHi": round(float(row["wealth_diff_ci_hi"])),
+        "probBeatsCiLo": round(float(row["prob_ci_lo"]), 3),
+        "probBeatsCiHi": round(float(row["prob_ci_hi"]), 3),
+    }
+
+
 sweep = pd.read_csv(RESULTS / "leverage_sweep.csv")
 manifest = load_validated("leverage_sweep")
 scenario_manifest = load_validated("scenario_comparison")
+sweep_ci = load_intervals("leverage_sweep")
+scenario_ci = load_intervals("scenario_comparison")
 
 rows = []
 for _, r in sweep.iterrows():
@@ -65,6 +87,7 @@ for _, r in sweep.iterrows():
             "avgShortExposure": round(float(r["avg_short_exposure_median"]), 3),
             "wealthDiffVsBaseline": round(float(r["wealth_diff_vs_baseline_median"])),
             "probBeatsBaseline": round(float(r["prob_beats_baseline"]), 3),
+            **ci_fields(sweep_ci.get(("", str(r["book"])))),
         }
     )
 
@@ -79,6 +102,7 @@ for _, r in scen.iterrows():
             "benefitUsed": round(float(r["tax_benefit_used_median"])),
             "wealthDiffVsBaseline": round(float(r["wealth_diff_vs_baseline_median"])),
             "probBeatsBaseline": round(float(r["prob_beats_baseline"]), 3),
+            **ci_fields(scenario_ci.get((str(r["scenario"]), str(r["book"])))),
         }
     )
 
@@ -89,7 +113,8 @@ header = f"""// GENERATED from talsim result CSVs; do not hand-edit numbers.
 // Quarterly steps, 10 years,
 // 36 synthetic assets, zero alpha unless labeled, full liquidation.
 // Regenerate: python -m talsim.cli sweep/scenarios, then
-// scripts/gen_summitward_ts.py in the talsim repo.
+// scripts/bootstrap_intervals.py and scripts/gen_summitward_ts.py in the
+// talsim repo. CI fields are sampling intervals only (see that script).
 
 export interface TalsimBookSummary {{
   book: string;
@@ -118,6 +143,12 @@ export interface TalsimBookSummary {{
   avgShortExposure: number;
   wealthDiffVsBaseline: number;
   probBeatsBaseline: number;
+  /** 95% bootstrap interval for the paired median difference (absent for 100/0). */
+  wealthDiffCiLo?: number;
+  wealthDiffCiHi?: number;
+  /** 95% Wilson interval for probBeatsBaseline (absent for 100/0). */
+  probBeatsCiLo?: number;
+  probBeatsCiHi?: number;
 }}
 
 export interface TalsimScenarioPoint {{
@@ -127,6 +158,10 @@ export interface TalsimScenarioPoint {{
   benefitUsed: number;
   wealthDiffVsBaseline: number;
   probBeatsBaseline: number;
+  wealthDiffCiLo?: number;
+  wealthDiffCiHi?: number;
+  probBeatsCiLo?: number;
+  probBeatsCiHi?: number;
 }}
 
 export const TALSIM_RUN = {{
