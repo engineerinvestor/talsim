@@ -1,0 +1,114 @@
+name: Release
+
+# Tag push (v*) publishes to PyPI. Manual dispatch publishes to TestPyPI only,
+# as a dry run. Both use PyPI Trusted Publishing (OIDC); no token is stored.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+          INIT=$(sed -nE 's/^__version__ = "([^"]+)"/\1/p' talsim/__init__.py)
+          CFF=$(sed -nE 's/^version: *(.+)$/\1/p' CITATION.cff)
+          echo "pyproject=$PY __init__=$INIT CITATION.cff=$CFF"
+          [ "$PY" = "$INIT" ] || { echo "::error::pyproject ($PY) != talsim/__init__.py ($INIT)"; exit 1; }
+          [ "$PY" = "$CFF" ] || { echo "::error::pyproject ($PY) != CITATION.cff ($CFF)"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            [ "$PY" = "$TAG" ] || { echo "::error::tag v$TAG != pyproject version $PY"; exit 1; }
+          fi
+          echo "version=$PY" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip "build>=1.2" "twine>=6.1"
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - name: Smoke-test the wheel in a clean venv outside the source tree
+        shell: bash
+        env:
+          EXPECTED: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/smoke"
+          "$RUNNER_TEMP/smoke/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/smoke/bin/pip" install dist/*.whl
+          cd "$RUNNER_TEMP"
+          ./smoke/bin/python - <<'PY'
+          import math, os, talsim
+          from talsim import ScenarioConfig, run_path
+
+          assert talsim.__file__.startswith(os.environ["RUNNER_TEMP"]), talsim.__file__
+          assert talsim.__version__ == os.environ["EXPECTED"], talsim.__version__
+          r = run_path(ScenarioConfig(years=1), seed=0)
+          assert math.isfinite(r.ending_after_tax_wealth) and r.ending_after_tax_wealth > 0
+          print("talsim", talsim.__version__, "ok")
+          PY
+          ./smoke/bin/python -m talsim.cli --help
+          ./smoke/bin/talsim --help
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/pytalsim
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-package-distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+          print-hash: true
+
+  publish-pypi:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pytalsim
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: python-package-distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true

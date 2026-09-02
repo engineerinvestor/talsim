@@ -1,0 +1,7 @@
+# Constraints for the official-artifact environment (.github/workflows/artifacts.yml).
+# Runner: ubuntu-24.04, CPython 3.12.14. The generated manifests under
+# docs/results/ are the authoritative record of the full installed environment;
+# this file only fixes the numeric stack so two runs cannot silently differ.
+numpy==2.5.2
+pandas==3.0.5
+matplotlib==3.11.1

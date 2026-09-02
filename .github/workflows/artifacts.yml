@@ -1,7 +1,8 @@
 name: Generate official artifacts
 
-# Official result artifacts are produced ONLY here, in pinned CI, so their
-# manifests describe one reproducible environment instead of whichever
+# Official result artifacts are produced ONLY here. The runner image, CPython
+# patch version, and numeric stack (requirements-artifacts.txt) are pinned, so
+# every manifest describes one reproducible environment instead of whichever
 # laptop last ran the sweep. Trigger manually after result-changing commits.
 on:
   workflow_dispatch:
@@ -9,31 +10,74 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: official-artifacts
+  cancel-in-progress: false
+
+env:
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+
 jobs:
   generate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 340
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
         with:
-          python-version: "3.12"
-      - run: pip install -e ".[plot]"
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.14"
+      - run: python -m pip install --upgrade pip
+      - run: |
+          pip install --only-binary ":all:" -c requirements-artifacts.txt -e ".[plot]"
+      - run: pip freeze
       - run: python -m talsim.cli sweep --paths 200 --seed 7 --out results/
       - run: python -m talsim.cli scenarios --paths 100 --seed 7 --out results/
+      - name: Assert manifests match the pinned stack
+        run: |
+          python - <<'PY'
+          import glob, json, re, sys
+
+          pins = dict(re.findall(r"^(\w+)==(\S+)", open("requirements-artifacts.txt").read(), re.M))
+          bad = []
+          for path in sorted(glob.glob("results/*_manifest.json")):
+              manifest = json.load(open(path))
+              installed = manifest["installed_packages"]
+              for name, version in pins.items():
+                  if installed.get(name) != version:
+                      bad.append(f"{path}: {name} {installed.get(name)} != pinned {version}")
+              if manifest["worktree_dirty"]:
+                  bad.append(f"{path}: generated from a dirty worktree")
+          if bad:
+              print("\n".join(bad))
+              sys.exit(1)
+          print("manifests match requirements-artifacts.txt")
+          PY
       - run: |
           mkdir -p docs/results
           cp results/*.csv results/*.json docs/results/
           python examples/make_readme_figure.py docs/results/leverage_sweep.csv
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: talsim-results
           path: docs/results/
       - name: Commit official artifacts
+        shell: bash
         run: |
+          set -euo pipefail
           git config user.name "Engineer Investor"
           git config user.email "166449067+engineerinvestor@users.noreply.github.com"
           git add docs/results docs/leverage_sweep.png
-          git diff --cached --quiet && echo "no changes" && exit 0
-          git commit -m "Regenerate official artifacts in pinned CI" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
-          git push
+          if git diff --cached --quiet; then echo "no changes"; exit 0; fi
+          git commit -m "Regenerate official artifacts in pinned CI"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin master
+            git rebase origin/master || { git rebase --abort; echo "::error::rebase conflict under docs/"; exit 1; }
+            if git push origin HEAD:master; then exit 0; fi
+            echo "push rejected (attempt $attempt); retrying"
+            sleep $((attempt * 10))
+          done
+          exit 1
