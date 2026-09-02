@@ -1,0 +1,7 @@
+# Streamlit Community Cloud environment for streamlit_app.py ONLY.
+# (Cloud auto-detects this filename; it plays no role in the package, in
+# CI tests, or in official-artifact generation, which is pinned separately
+# in requirements-artifacts.txt.)
+.
+streamlit>=1.37
+altair>=5

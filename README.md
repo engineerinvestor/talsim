@@ -16,6 +16,13 @@ The question it exists to answer: **when does additional long-short leverage cre
 > conditional on stated assumptions and are not evidence about any real
 > strategy. Do not use this for personal financial decisions.
 
+## Try it in your browser
+
+An interactive explorer runs at **https://talsim.streamlit.app**: browse the
+pinned-CI official results, or run the actual engine on your own assumptions
+(bounded small-sample runs; the tables in this README come from the 200-path
+pinned-CI run).
+
 ## Results at a glance
 
 The headline experiment: five books from long-only to 250/150 traded on the
