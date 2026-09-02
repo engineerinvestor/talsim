@@ -1,7 +1,8 @@
 # talsim
 
 [![CI](https://github.com/engineerinvestor/talsim/actions/workflows/ci.yml/badge.svg)](https://github.com/engineerinvestor/talsim/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/engineerinvestor/talsim/blob/master/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/pytalsim.svg)](https://pypi.org/project/pytalsim/)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
 A research simulator for **tax-aware long-short (TALS)** portfolio strategies: lot-level tax accounting with enforced wash sales, long/short financing costs, leverage, margin response, full liquidation, and Monte Carlo outcome distributions on a synthetic market.
@@ -20,7 +21,7 @@ same 200 simulated market paths, zero manager alpha, $1M for 10 years, full
 liquidation at the end. Leverage multiplies harvested losses and still loses
 the race after netting, costs, risk, and the terminal tax bill:
 
-![Leverage sweep: losses grow, wealth falls, costs and risk compound](docs/leverage_sweep.png)
+![Leverage sweep: losses grow, wealth falls, costs and risk compound](https://raw.githubusercontent.com/engineerinvestor/talsim/master/docs/leverage_sweep.png)
 
 | Book | Median after-tax wealth | Paired diff vs 100/0 | Paths beating 100/0 | Gross losses | Tax benefit used |
 |---|---:|---:|---:|---:|---:|
@@ -35,7 +36,7 @@ infeasible at FINRA percentage floors and runs net-preserving at roughly
 233/133). 7.3x the gross losses buy 2.4x the usable tax benefit. Every number regenerates from
 `python -m talsim.cli sweep --paths 200 --seed 7` on the same platform; the
 summary, path-level results, and manifest behind this table are committed
-under [`docs/results/`](docs/results/) and regenerated in pinned CI, and the
+under [`docs/results/`](https://github.com/engineerinvestor/talsim/tree/master/docs/results) and regenerated in pinned CI, and the
 figure rebuilds with
 `python examples/make_readme_figure.py docs/results/leverage_sweep.csv`.
 The 200-path probabilities are demonstration-scale, not inferential
@@ -45,7 +46,7 @@ evidence about any real strategy.
 
 ## What it is
 
-- A deterministic research engine: same config + seed + environment = same result. Floating-point behavior varies across platforms and BLAS builds and can cross discrete trade thresholds, so official artifacts are generated only in pinned CI (see `.github/workflows/artifacts.yml`), and every manifest records the commit, worktree state, source-tree hash, platform, and full installed-package list that produced it.
+- A deterministic research engine: same config + seed + environment = same result. Floating-point behavior varies across platforms and BLAS builds and can cross discrete trade thresholds, so official artifacts are generated only in pinned CI (runner image, CPython patch version, and numeric stack fixed in `.github/workflows/artifacts.yml` and `requirements-artifacts.txt`), and every manifest records the commit, worktree state, source-tree hash, platform, and full installed-package list that produced it.
 - An accounting-first design: the `Ledger` is independent of the trading policy and enforces wash-sale disallowance itself, so any trade list, compliant or not, is accounted correctly.
 - Zero-alpha by default. With any positive alpha assumption a leverage comparison silently becomes an alpha study; here alpha is an explicit input, defaulted to zero.
 
@@ -58,8 +59,19 @@ evidence about any real strategy.
 ## Install
 
 ```bash
+pip install pytalsim            # import talsim; CLI: talsim
+pip install "pytalsim[plot]"    # adds matplotlib for the report charts
+```
+
+The distribution is named `pytalsim` because PyPI rejects `talsim` as too
+similar to an unrelated existing project; the import name and the command
+are still `talsim`.
+
+For development, from a clone:
+
+```bash
 pip install -e ".[dev]"
-pytest            # 51 tests: unit, regression, and property-based (hypothesis)
+pytest            # 56 tests: unit, regression, and property-based (hypothesis)
 ```
 
 ## Quick start
@@ -97,9 +109,11 @@ print(
 Or from the command line:
 
 ```bash
-python -m talsim.cli sweep --paths 200 --seed 7 --out results/
-python -m talsim.cli scenarios --paths 100 --seed 7 --out results/
+talsim sweep --paths 200 --seed 7 --out results/
+talsim scenarios --paths 100 --seed 7 --out results/
 ```
+
+(`python -m talsim.cli` is equivalent to the `talsim` command.)
 
 Each run writes a summary CSV, a **path-level CSV** (every path, with its seed, so any statistic can be recomputed), and a manifest recording the package version, git commit, Python and NumPy versions, the full config of every scenario, and SHA-256 checksums of the outputs. The sweep summary includes **paired differences versus 100/0 on common random numbers** (median difference and probability of beating the baseline), which are far more informative than medians alone.
 
@@ -163,10 +177,14 @@ requires more than 365 days; early insolvency liquidates at its actual
 step and settles its actual year (with a real regression test replacing a
 vacuous one); configurations whose net core is infeasible at maintenance
 floors are rejected in deleverage mode; ledger operations validate inputs
-before mutating and reject unknown sides; all config values must be
-finite; manifests record worktree state, source hash, platform, and full
-package versions; official artifacts move to pinned CI. Results produced
-by 0.3.0 should be discarded.
+before mutating and reject unknown sides; all config values, including
+every outside-gain event, must be finite and the offset limit
+non-negative; the terminal unwind shares the final step (it was stamped
+one step later, granting every lot an extra period of holding time, so an
+inception lot on an exactly-one-year horizon counted as long term);
+manifests record worktree state, source hash, platform, and full package
+versions; official artifacts move to pinned CI; first PyPI release, as
+`pytalsim`. Results produced by 0.3.0 should be discarded.
 
 **0.3.0** — Second correctness release following a follow-up external
 review. Partial wash-sale matches now SPLIT replacement lots (matched
@@ -204,7 +222,7 @@ If you use talsim in academic work, please cite it:
   title   = {talsim: a research simulator for tax-aware long-short
              portfolio strategies},
   year    = {2026},
-  version = {0.2.0},
+  version = {0.4.0},
   url     = {https://github.com/engineerinvestor/talsim},
   license = {MIT},
   note    = {Synthetic-market research software; results are conditional
@@ -212,7 +230,7 @@ If you use talsim in academic work, please cite it:
 }
 ```
 
-A machine-readable [`CITATION.cff`](CITATION.cff) is included, so GitHub's
+A machine-readable [`CITATION.cff`](https://github.com/engineerinvestor/talsim/blob/master/CITATION.cff) is included, so GitHub's
 "Cite this repository" button produces the same reference.
 
 ## License

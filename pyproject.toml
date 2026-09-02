@@ -1,22 +1,30 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "talsim"
+# Distribution name differs from the import name: PyPI rejects "talsim" as
+# too similar to the unrelated existing project "taisim".
+name = "pytalsim"
 version = "0.4.0"
 description = "Research simulator for tax-aware long-short (TALS) portfolio strategies: lot-level tax accounting, leverage, costs, and after-tax outcome distributions on synthetic markets."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Engineer Investor (@egr_investor)" }]
 keywords = ["tax-loss-harvesting", "long-short", "portfolio", "simulation", "after-tax"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Financial and Insurance Industry",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Office/Business :: Financial :: Investment",
 ]
 dependencies = [
@@ -30,6 +38,13 @@ dev = ["pytest>=8.0", "ruff>=0.4", "matplotlib>=3.8", "hypothesis>=6.100", "mypy
 
 [project.urls]
 Homepage = "https://github.com/engineerinvestor/talsim"
+Repository = "https://github.com/engineerinvestor/talsim"
+Documentation = "https://engineerinvestor.github.io/talsim/"
+Issues = "https://github.com/engineerinvestor/talsim/issues"
+Changelog = "https://github.com/engineerinvestor/talsim#changelog"
+
+[project.scripts]
+talsim = "talsim.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["talsim*"]
