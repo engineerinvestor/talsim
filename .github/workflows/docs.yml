@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e . pdoc
-      - run: pdoc talsim --docformat plaintext --output-directory _site
+      - run: pdoc talsim --docformat markdown --output-directory _site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
