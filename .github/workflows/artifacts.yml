@@ -34,8 +34,8 @@ jobs:
       - run: |
           pip install --only-binary ":all:" -c requirements-artifacts.txt -e ".[plot]"
       - run: pip freeze
-      - run: python -m talsim.cli sweep --paths 200 --seed 7 --out results/
-      - run: python -m talsim.cli scenarios --paths 100 --seed 7 --out results/
+      - run: python -m talsim.cli sweep --paths 200 --seed 7 --jobs 4 --out results/
+      - run: python -m talsim.cli scenarios --paths 100 --seed 7 --jobs 4 --out results/
       - name: Assert manifests match the pinned stack
         run: |
           python - <<'PY'

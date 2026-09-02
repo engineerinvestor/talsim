@@ -278,6 +278,17 @@ def test_insolvent_path_liquidates_at_termination_step(monkeypatch):
     assert max(step for step, _ in calls) == hit.termination_step
 
 
+def test_run_sweep_parallel_matches_serial():
+    cfg = small_cfg()
+    serial = run_sweep(cfg, ["100/0", "130/30"], n_paths=6, base_seed=3)
+    parallel = run_sweep(cfg, ["100/0", "130/30"], n_paths=6, base_seed=3, n_jobs=2)
+    for a, b in zip(serial, parallel, strict=True):
+        assert a.book == b.book
+        assert a.paths == b.paths
+    with pytest.raises(ValueError):
+        run_sweep(cfg, ["100/0"], n_paths=1, n_jobs=0)
+
+
 def test_sweep_uses_common_random_numbers():
     cfg = small_cfg()
     sweeps = run_sweep(cfg, ["100/0", "130/30"], n_paths=6, base_seed=3)

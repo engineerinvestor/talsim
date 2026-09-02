@@ -470,15 +470,43 @@ class SweepResult:
         return float(np.mean([p.maintenance_deficiency_observed for p in self.paths]))
 
 
+def _run_task(task: tuple[ScenarioConfig, int]) -> PathResult:
+    """Module-level so it pickles under the spawn start method."""
+    cfg, seed = task
+    return run_path(cfg, seed=seed)
+
+
 def run_sweep(
-    cfg: ScenarioConfig, books: list[str], n_paths: int, base_seed: int = 7
+    cfg: ScenarioConfig,
+    books: list[str],
+    n_paths: int,
+    base_seed: int = 7,
+    n_jobs: int | None = 1,
 ) -> list[SweepResult]:
-    """Run each book over common random numbers (path p reuses seed base+p)."""
+    """Run each book over common random numbers (path p reuses seed base+p).
+
+    `n_jobs` > 1 runs paths in a process pool (`None` uses every core).
+    Each path is a pure function of its config and seed, so parallel runs
+    return exactly the serial results in the same order; only wall time
+    changes.
+    """
+    if n_jobs is not None and n_jobs < 1:
+        raise ValueError("n_jobs must be >= 1 or None")
+    book_cfgs = [cfg.with_book(book) for book in books]
+    tasks = [(book_cfg, base_seed + p) for book_cfg in book_cfgs for p in range(n_paths)]
+    if n_jobs == 1:
+        paths = [_run_task(task) for task in tasks]
+    else:
+        import os
+        from concurrent.futures import ProcessPoolExecutor
+
+        workers = n_jobs or os.cpu_count() or 1
+        chunksize = max(1, len(tasks) // (4 * workers))
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            paths = list(pool.map(_run_task, tasks, chunksize=chunksize))
     results = []
-    for book in books:
-        book_cfg = cfg.with_book(book)
+    for i, (book, book_cfg) in enumerate(zip(books, book_cfgs, strict=True)):
         sweep = SweepResult(book=book, gross_exposure=book_cfg.gross_exposure)
-        for p in range(n_paths):
-            sweep.paths.append(run_path(book_cfg, seed=base_seed + p))
+        sweep.paths.extend(paths[i * n_paths : (i + 1) * n_paths])
         results.append(sweep)
     return results

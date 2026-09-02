@@ -187,6 +187,7 @@ def write_manifest(
         "command": name,
         "paths": args.paths,
         "base_seed": args.seed,
+        "jobs": getattr(args, "jobs", 1),
         "configs": {label: dataclasses.asdict(cfg) for label, cfg in configs.items()},
         "file_checksums": {f.name: _sha256(f) for f in files if f.exists()},
     }
@@ -197,7 +198,7 @@ def cmd_sweep(args: argparse.Namespace) -> None:
     cfg = ScenarioConfig()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    sweeps = run_sweep(cfg, list(BOOK_PRESETS), args.paths, base_seed=args.seed)
+    sweeps = run_sweep(cfg, list(BOOK_PRESETS), args.paths, base_seed=args.seed, n_jobs=args.jobs)
     summary_path = out / "leverage_sweep.csv"
     paths_path = out / "leverage_sweep_paths.csv"
     summarize(sweeps).to_csv(summary_path, index=False)
@@ -242,7 +243,9 @@ def cmd_scenarios(args: argparse.Namespace) -> None:
     for name, overrides in SCENARIOS.items():
         cfg = dataclasses.replace(ScenarioConfig(), **overrides)
         configs[name] = cfg
-        sweeps = run_sweep(cfg, list(BOOK_PRESETS), args.paths, base_seed=args.seed)
+        sweeps = run_sweep(
+            cfg, list(BOOK_PRESETS), args.paths, base_seed=args.seed, n_jobs=args.jobs
+        )
         df = summarize(sweeps)
         df.insert(0, "scenario", name)
         frames.append(df)
@@ -272,6 +275,12 @@ def main() -> None:
         p.add_argument("--paths", type=positive_int, default=200 if name == "sweep" else 100)
         p.add_argument("--seed", type=int, default=7)
         p.add_argument("--out", type=str, default="results")
+        p.add_argument(
+            "--jobs",
+            type=positive_int,
+            default=1,
+            help="worker processes for paths; results are identical at any value",
+        )
         p.set_defaults(fn=fn)
     args = parser.parse_args()
     args.fn(args)
