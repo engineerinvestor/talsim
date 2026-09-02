@@ -89,7 +89,7 @@ for s in sweeps:
         f"gross losses ${s.median('gross_losses_realized'):,.0f}",
         f"benefit used ${s.median('tax_benefit_used'):,.0f}",
     )
-# 100/0  median wealth $1,722,303 gross losses $751,035   benefit used $109,473
+# 100/0  median wealth $1,722,303 gross losses $751,035 benefit used $109,473
 # 130/30 median wealth $1,585,744 gross losses $2,562,042 benefit used $157,310
 ```
 
