@@ -55,3 +55,33 @@ jobs:
           PY
           ./smoke/bin/python -m talsim.cli --help
           ./smoke/bin/talsim --help
+
+  notebook:
+    # Executes the tutorial headlessly so the Colab entry point cannot rot.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]" nbclient ipykernel
+      - name: Execute examples/talsim_tutorial.ipynb
+        env:
+          MPLBACKEND: Agg
+        run: |
+          python - <<'PY'
+          import nbformat
+          from nbclient import NotebookClient
+
+          path = "examples/talsim_tutorial.ipynb"
+          nb = nbformat.read(path, as_version=4)
+          client = NotebookClient(
+              nb,
+              timeout=600,
+              kernel_name="python3",
+              resources={"metadata": {"path": "examples"}},
+          )
+          client.execute()
+          n_code = sum(c.cell_type == "code" for c in nb.cells)
+          print("executed", n_code, "code cells from", path)
+          PY

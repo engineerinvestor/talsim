@@ -52,6 +52,8 @@ include = ["talsim*"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# The tutorial notebook ends cells with bare expressions for display.
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

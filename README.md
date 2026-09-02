@@ -5,6 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/pytalsim.svg)](https://pypi.org/project/pytalsim/)
 [![Python](https://img.shields.io/pypi/pyversions/pytalsim.svg)](https://pypi.org/project/pytalsim/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/engineerinvestor/talsim/blob/master/LICENSE)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/engineerinvestor/talsim/blob/master/examples/talsim_tutorial.ipynb)
 
 A research simulator for **tax-aware long-short (TALS)** portfolio strategies: lot-level tax accounting with enforced wash sales, long/short financing costs, leverage, margin response, full liquidation, and Monte Carlo outcome distributions on a synthetic market.
 
@@ -118,6 +119,18 @@ talsim scenarios --paths 100 --seed 7 --out results/
 
 Each run writes a summary CSV, a **path-level CSV** (every path, with its seed, so any statistic can be recomputed), and a manifest recording the package version, git commit, Python and NumPy versions, the full config of every scenario, and SHA-256 checksums of the outputs. The sweep summary includes **paired differences versus 100/0 on common random numbers** (median difference and probability of beating the baseline), which are far more informative than medians alone.
 
+## Tutorial
+
+A short notebook walks through the API end to end: one path, the five
+accounting quantities, a leverage sweep on common random numbers, the report
+figure, an outside-gain what-if, margin feasibility, and reproducibility. It
+runs in about a minute, and CI executes it on every push. Its path counts are
+small, so its numbers are illustrative; the official results above come from
+pinned CI.
+
+- Open in Colab: https://colab.research.google.com/github/engineerinvestor/talsim/blob/master/examples/talsim_tutorial.ipynb
+- Source: https://github.com/engineerinvestor/talsim/blob/master/examples/talsim_tutorial.ipynb
+
 ## The accounting the reports keep separate
 
 More harvested losses are not more wealth. Every report distinguishes:
@@ -160,6 +173,9 @@ talsim/
   simulation.py   # lifecycle loop, costs, margin response, liquidation, Monte Carlo
   plotting.py     # report charts (optional matplotlib extra)
   cli.py          # reproducible runs, path-level output, provenance manifests
+examples/
+  talsim_tutorial.ipynb   # end-to-end tutorial (Colab link in the first cell)
+  make_readme_figure.py   # rebuilds docs/leverage_sweep.png from the summary CSV
 ```
 
 ## Documentation
