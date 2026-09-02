@@ -36,7 +36,9 @@ for _, r in sweep.iterrows():
             "dividendTaxes": round(float(r["dividend_taxes_median"])),
             "debitInterest": round(float(r["debit_interest_median"])),
             "deficiencyProb": round(float(r["maintenance_deficiency_probability"]), 4),
-            "finalExposureScale": round(float(r["final_exposure_scale_median"]), 3),
+            "extensionScale": round(float(r["extension_scale"]), 3),
+            "avgLongExposure": round(float(r["avg_long_exposure_median"]), 3),
+            "avgShortExposure": round(float(r["avg_short_exposure_median"]), 3),
             "wealthDiffVsBaseline": round(float(r["wealth_diff_vs_baseline_median"])),
             "probBeatsBaseline": round(float(r["prob_beats_baseline"]), 3),
         }
@@ -86,7 +88,9 @@ export interface TalsimBookSummary {{
   dividendTaxes: number;
   debitInterest: number;
   deficiencyProb: number;
-  finalExposureScale: number;
+  extensionScale: number;
+  avgLongExposure: number;
+  avgShortExposure: number;
   wealthDiffVsBaseline: number;
   probBeatsBaseline: number;
 }}
