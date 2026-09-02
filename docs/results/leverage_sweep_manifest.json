@@ -40,12 +40,12 @@
     }
   },
   "file_checksums": {
-    "leverage_sweep.csv": "5f78a1db6001a427c491c00d319970f9430196843394d772ebecb37e9eb9b8a7",
-    "leverage_sweep_paths.csv": "38564b88f80ce637253c4c06a809859fdb0860de3af62f7e6c8dc1eb1eb5bf6e"
+    "leverage_sweep.csv": "c18e8e37b3d14d59a69b1b9dff5792626f30d92405d16ad1a724873c5d629dd7",
+    "leverage_sweep_paths.csv": "1237fdd70163f37f166e95d39caac6cec4bc3a2febb0a980f403dc7684cf010b"
   },
-  "git_commit": "3d02faeee770f3aad3334f4a344066c6f63a2750",
+  "git_commit": "5e24df8e8e16159ba210da5f8f22b0a786f016f9",
   "numpy_version": "2.5.2",
   "paths": 200,
   "python_version": "3.12.11",
-  "talsim_version": "0.2.0"
+  "talsim_version": "0.3.0"
 }

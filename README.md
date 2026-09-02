@@ -25,14 +25,14 @@ the race after netting, costs, risk, and the terminal tax bill:
 | Book | Median after-tax wealth | Paired diff vs 100/0 | Paths beating 100/0 | Gross losses | Tax benefit used |
 |---|---:|---:|---:|---:|---:|
 | 100/0 | $1.62M | — | — | $0.67M | $91k |
-| 130/30 | $1.44M | −$192k | 24% | $1.93M | $117k |
-| 150/50 | $1.32M | −$285k | 19% | $2.44M | $126k |
-| 200/100 | $1.11M | −$496k | 17% | $3.50M | $149k |
-| 250/150 | $0.90M | −$634k | 14% | $4.07M | $151k |
+| 130/30 | $1.49M | −$167k | 28% | $2.10M | $126k |
+| 150/50 | $1.43M | −$184k | 27% | $2.73M | $145k |
+| 200/100 | $1.27M | −$332k | 22% | $4.16M | $180k |
+| 250/150 | $1.10M | −$400k | 23% | $4.90M | $220k |
 
 Medians across 200 common-random-number paths, seed 7 (250/150 is
-infeasible at FINRA maintenance floors and runs at ~0.91 scale). 6.1x the
-gross losses buy 1.7x the usable tax benefit. Every number regenerates from
+infeasible at FINRA percentage floors and runs net-preserving at roughly
+233/133). 7.3x the gross losses buy 2.4x the usable tax benefit. Every number regenerates from
 `python -m talsim.cli sweep --paths 200 --seed 7`; the summary, path-level
 results, and manifest behind this table are committed under
 [`docs/results/`](docs/results/), and the figure rebuilds with
@@ -74,7 +74,7 @@ for s in sweeps:
         f"benefit used ${s.median('tax_benefit_used'):,.0f}",
     )
 # 100/0  median wealth $1,726,759 gross losses $662,392   benefit used $91,417
-# 130/30 median wealth $1,508,928 gross losses $1,997,230 benefit used $119,115
+# 130/30 median wealth $1,536,264 gross losses $2,153,987 benefit used $123,435
 ```
 
 Single-path inspection, with every assumption in one config object:
@@ -88,7 +88,7 @@ print(
     f"wealth ${r.ending_after_tax_wealth:,.0f}, TE {r.tracking_error:.1%}, "
     f"turnover {r.annual_turnover:.1f}x, washed ${r.disallowed_wash_losses:,.0f}"
 )
-# wealth $2,186,938, TE 11.1%, turnover 2.3x, washed $240,928
+# wealth $2,304,833, TE 10.9%, turnover 2.3x, washed $147,564
 ```
 
 Or from the command line:
