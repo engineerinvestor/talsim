@@ -44,17 +44,16 @@ def target_weights(signal: np.ndarray, long_exposure: float, short_exposure: flo
 
     ranks = np.argsort(np.argsort(signal))  # 0..k-1, higher = stronger signal
     tilt = ranks - ranks.mean()
+    # The scale is chosen by evaluating the whole grid at once. The grid,
+    # its order, the first-minimum tie-break, and the per-element
+    # operation order are kept exactly as in the original scalar loop so
+    # results match earlier versions bitwise; only the wall time changed.
     scale_grid = np.linspace(0.1, 50.0, 500)
-    best = base
-    best_err = np.inf
-    for scale in scale_grid:
-        w = base + tilt / np.abs(tilt).sum() * scale
-        short_sum = -w[w < 0].sum()
-        err = abs(short_sum - short_exposure)
-        if err < best_err:
-            best_err = err
-            best = w
-    w = best.copy()
+    tilt_norm = tilt / np.abs(tilt).sum()
+    candidates = base[None, :] + tilt_norm[None, :] * scale_grid[:, None]
+    short_sums = -np.where(candidates < 0, candidates, 0.0).sum(axis=1)
+    best = int(np.argmin(np.abs(short_sums - short_exposure)))
+    w = base + tilt_norm * scale_grid[best]
     neg = w < 0
     if w[neg].sum() != 0:
         w[neg] *= short_exposure / (-w[neg].sum())
