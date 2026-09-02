@@ -55,14 +55,17 @@ SUMMARY_ATTRS = [
     "dividend_taxes",
     "debit_interest",
     "min_margin_excess_ratio",
+    "avg_long_exposure",
+    "avg_short_exposure",
     "max_net_exposure_error",
 ]
 
 PATH_ATTRS = SUMMARY_ATTRS + [
     "maintenance_deficiency_observed",
     "feasible_at_inception",
+    "insolvent",
     "deleverage_events",
-    "final_exposure_scale",
+    "extension_scale",
     "yearly_taxes_paid",
 ]
 
@@ -79,9 +82,8 @@ def summarize(sweeps) -> pd.DataFrame:
             "deleverage_events_median": float(
                 np.median([p.deleverage_events for p in sweep.paths])
             ),
-            "final_exposure_scale_median": float(
-                np.median([p.final_exposure_scale for p in sweep.paths])
-            ),
+            "extension_scale": sweep.paths[0].extension_scale,
+            "insolvency_probability": float(np.mean([p.insolvent for p in sweep.paths])),
         }
         for attr in SUMMARY_ATTRS:
             row[f"{attr}_p10"] = sweep.percentile(attr, 10)
@@ -218,12 +220,19 @@ def cmd_scenarios(args: argparse.Namespace) -> None:
     write_manifest(out, "scenario_comparison", args, configs, [summary_path, paths_path])
 
 
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="talsim")
     sub = parser.add_subparsers(dest="command", required=True)
     for name, fn in [("sweep", cmd_sweep), ("scenarios", cmd_scenarios)]:
         p = sub.add_parser(name)
-        p.add_argument("--paths", type=int, default=200 if name == "sweep" else 100)
+        p.add_argument("--paths", type=positive_int, default=200 if name == "sweep" else 100)
         p.add_argument("--seed", type=int, default=7)
         p.add_argument("--out", type=str, default="results")
         p.set_defaults(fn=fn)

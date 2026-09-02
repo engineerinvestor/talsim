@@ -74,7 +74,10 @@ class PathResult:
     maintenance_deficiency_observed: bool
     feasible_at_inception: bool
     deleverage_events: int
-    final_exposure_scale: float
+    extension_scale: float  # effective L/S extension vs configured (1.0 = full)
+    insolvent: bool
+    avg_long_exposure: float
+    avg_short_exposure: float
     max_net_exposure_error: float
     yearly_taxes_paid: float
 
@@ -95,7 +98,6 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     side_account = 0.0
     carry_st = carry_lt = 0.0
     year_qual_div = year_ord_div = 0.0
-    pil_accrual: dict[int, float] = {}
 
     benefit_used_total = 0.0
     taxes_paid_total = 0.0
@@ -107,23 +109,14 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     active_returns: list[float] = []
     min_margin_ratio = np.inf
     deficiency_observed = False
+    insolvent = False
     deleverage_events = 0
     max_exposure_error = 0.0
+    long_exposures: list[float] = []
+    short_exposures: list[float] = []
 
     def nav_now() -> float:
         return state.cash + ledger.longs.market_value(prices) - ledger.shorts.market_value(prices)
-
-    def short_extra_basis() -> dict[int, float]:
-        out: dict[int, float] = {}
-        for asset, accrued in pil_accrual.items():
-            held = ledger.shorts.shares_of(asset)
-            if held > 1e-9 and accrued > 0:
-                out[asset] = accrued / held
-        return out
-
-    def consume_pil(asset: int, shares_closed: float, pre_shares: float) -> None:
-        if asset in pil_accrual and pre_shares > 1e-9:
-            pil_accrual[asset] *= max(0.0, 1 - shares_closed / pre_shares)
 
     # Feasibility at inception under the maintenance floors.
     inception_req = (
@@ -131,12 +124,20 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     )
     feasible_at_inception = inception_req <= 1.0
 
-    # Exposure scale: forced deleveraging shrinks it permanently. A book
-    # that re-levered to an infeasible target every quarter would thrash
-    # between breach and forced sale on impossible capital.
-    exposure_scale = 1.0
+    # Feasibility scaling preserves NET exposure: an infeasible book keeps
+    # its long-only core and shrinks the long/short extension equally, so
+    # every book in a sweep still compares at the same market exposure
+    # (250/150 at FINRA floors becomes roughly 233/133, not 228/137).
+    net_exposure = cfg.long_exposure - cfg.short_exposure
+    extension = cfg.short_exposure
     if not feasible_at_inception and cfg.margin_response == "deleverage":
-        exposure_scale = cfg.deleverage_buffer / inception_req
+        ext_max = (cfg.deleverage_buffer - cfg.long_maintenance * net_exposure) / (
+            cfg.long_maintenance + cfg.short_maintenance
+        )
+        extension = max(min(extension, ext_max), 0.0)
+    eff_long = net_exposure + extension
+    eff_short = extension
+    extension_scale = extension / cfg.short_exposure if cfg.short_exposure > 0 else 1.0
 
     # Alpha calibration at inception (signal-proportional drift).
     weights = target_weights(path.signals[0], cfg.long_exposure, cfg.short_exposure)
@@ -147,12 +148,8 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         if abs(denom) > 1e-9:
             alpha_k = target_step / denom
 
-    # Initial build (at the feasible scale).
-    build_weights = target_weights(
-        path.signals[0],
-        cfg.long_exposure * exposure_scale,
-        cfg.short_exposure * exposure_scale,
-    )
+    # Initial build (at the feasible extension).
+    build_weights = target_weights(path.signals[0], eff_long, eff_short)
     plan = plan_trades(cfg, build_weights, cfg.starting_capital, prices, ledger, step=0)
     _, traded0, cash_delta = execute_plan(plan, prices, ledger, step=0)
     state.cash += cash_delta
@@ -164,35 +161,25 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     max_dd = 0.0
     prev_nav = cfg.starting_capital
 
-    def close_fraction(fraction: float, step: int) -> float:
-        """Force-close a fraction of every position. Returns dollars traded."""
+    def close_sides(long_fraction: float, short_fraction: float, step: int) -> tuple[float, float]:
+        """Force-close fractions of each side. Returns (traded $, txn cost)."""
         traded = 0.0
-        extra = short_extra_basis()
         for asset in range(n):
             held_long = ledger.longs.shares_of(asset)
-            if held_long > 1e-9:
-                take = held_long * fraction
+            if held_long > 1e-9 and long_fraction > 0:
+                take = held_long * long_fraction
                 ledger.close("long", asset, take, prices[asset], step)
                 state.cash += take * prices[asset]
                 traded += take * prices[asset]
             held_short = ledger.shorts.shares_of(asset)
-            if held_short > 1e-9:
-                take = held_short * fraction
-                ledger.close(
-                    "short",
-                    asset,
-                    take,
-                    prices[asset],
-                    step,
-                    extra_basis_per_share=extra.get(asset, 0.0),
-                )
+            if held_short > 1e-9 and short_fraction > 0:
+                take = held_short * short_fraction
+                ledger.close("short", asset, take, prices[asset], step)
                 state.cash -= take * prices[asset]
                 traded += take * prices[asset]
-                consume_pil(asset, take, held_short)
         cost = traded * cfg.transaction_cost
         state.cash -= cost
-        nonlocal_txn = cost
-        return traded, nonlocal_txn
+        return traded, cost
 
     for t in range(cfg.n_steps):
         # 1. Market moves.
@@ -212,19 +199,19 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             lot.shares * prices[asset]
             for asset, lots in ledger.longs.lots.items()
             for lot in lots
-            if t - lot.open_step >= 1
+            if ledger.held_days(lot, t) >= 61.0
         )
         qual_div = qualified_mv * cfg.dividend_yield * dt
         ord_div = max(long_mv - qualified_mv, 0.0) * cfg.dividend_yield * dt
         fee_cost = max(nav, 0.0) * cfg.management_fee * dt
         borrow_cost = short_mv * cfg.borrow_cost * dt
         pil_step = 0.0
-        for asset in range(n):
-            held = ledger.shorts.shares_of(asset)
-            if held > 1e-9:
-                amount = held * prices[asset] * cfg.dividend_yield * dt
-                pil_accrual[asset] = pil_accrual.get(asset, 0.0) + amount
-                pil_step += amount
+        for asset, lots in ledger.shorts.lots.items():
+            for lot in lots:
+                if lot.shares > 1e-9:
+                    amount = lot.shares * prices[asset] * cfg.dividend_yield * dt
+                    lot.pil_accrued += amount
+                    pil_step += amount
         state.cash += qual_div + ord_div - fee_cost - borrow_cost - pil_step
         if state.cash > 0:
             state.cash += state.cash * cfg.cash_rate * dt
@@ -240,17 +227,9 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
 
         # 3. Rebalance and harvest.
         nav = nav_now()
-        weights = target_weights(
-            path.signals[t],
-            cfg.long_exposure * exposure_scale,
-            cfg.short_exposure * exposure_scale,
-        )
+        weights = target_weights(path.signals[t], eff_long, eff_short)
         plan = plan_trades(cfg, weights, max(nav, 1.0), prices, ledger, step=t)
-        pre_short = {a: ledger.shorts.shares_of(a) for a, _ in plan.short_covers}
-        extra = short_extra_basis()
-        _, traded, cash_delta = execute_plan(plan, prices, ledger, step=t, short_extra_basis=extra)
-        for asset, shares in plan.short_covers:
-            consume_pil(asset, shares, pre_short[asset])
+        _, traded, cash_delta = execute_plan(plan, prices, ledger, step=t)
         state.cash += cash_delta
         cost = traded * cfg.transaction_cost
         state.cash -= cost
@@ -261,11 +240,16 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         # wash blocks legitimately bend exposure inside known bounds).
         nav = nav_now()
         if nav > 0:
-            net_exp = (ledger.longs.market_value(prices) - ledger.shorts.market_value(prices)) / nav
-            scaled_net = (cfg.long_exposure - cfg.short_exposure) * exposure_scale
-            max_exposure_error = max(max_exposure_error, abs(net_exp - scaled_net))
+            long_exp_now = ledger.longs.market_value(prices) / nav
+            short_exp_now = ledger.shorts.market_value(prices) / nav
+            long_exposures.append(long_exp_now)
+            short_exposures.append(short_exp_now)
+            net_exp = long_exp_now - short_exp_now
+            max_exposure_error = max(max_exposure_error, abs(net_exp - net_exposure))
 
-        # 5. Margin maintenance: respond, don't just observe.
+        # 5. Margin maintenance: respond, don't just observe. A breach is
+        # cured by trading back to the compliant target fractions (which
+        # preserves net exposure), not by scaling both sides blindly.
         for _ in range(4):
             long_mv = ledger.longs.market_value(prices)
             short_mv = ledger.shorts.market_value(prices)
@@ -274,6 +258,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             if nav <= 0:
                 min_margin_ratio = min(min_margin_ratio, -1.0)
                 deficiency_observed = True
+                insolvent = True
                 break
             ratio = (nav - requirement) / nav
             min_margin_ratio = min(min_margin_ratio, ratio)
@@ -283,11 +268,16 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             if cfg.margin_response == "flag" or requirement <= 0:
                 break
             deleverage_events += 1
-            fraction = 1.0 - cfg.deleverage_buffer * nav / requirement
-            fraction = min(max(fraction, 0.02), 0.95)
-            traded_forced, cost_forced = close_fraction(fraction, t)
+            target_long_mv = eff_long * nav
+            target_short_mv = eff_short * nav
+            long_frac = max(0.0, 1 - target_long_mv / long_mv) if long_mv > 0 else 0.0
+            short_frac = max(0.0, 1 - target_short_mv / short_mv) if short_mv > 0 else 0.0
+            if long_frac < 0.01 and short_frac < 0.01:
+                break
+            traded_forced, cost_forced = close_sides(long_frac, short_frac, t)
             txn += cost_forced
-            exposure_scale *= 1.0 - fraction
+        if insolvent:
+            break
 
         # 6. NAV bookkeeping.
         nav = nav_now()
@@ -340,7 +330,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     net_realized_pre_liq += pre_liq_st + pre_liq_lt
 
     liq_step = cfg.n_steps
-    liq_traded, liq_cost = close_fraction(1.0, liq_step)
+    liq_traded, liq_cost = close_sides(1.0, 1.0, liq_step)
     txn += liq_cost
     if not ledger.is_empty():
         raise AssertionError("ledger not empty after full liquidation")
@@ -423,7 +413,10 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         maintenance_deficiency_observed=deficiency_observed,
         feasible_at_inception=feasible_at_inception,
         deleverage_events=deleverage_events,
-        final_exposure_scale=exposure_scale,
+        extension_scale=extension_scale,
+        insolvent=insolvent,
+        avg_long_exposure=float(np.mean(long_exposures)) if long_exposures else 0.0,
+        avg_short_exposure=float(np.mean(short_exposures)) if short_exposures else 0.0,
         max_net_exposure_error=max_exposure_error,
         yearly_taxes_paid=taxes_paid_total,
     )

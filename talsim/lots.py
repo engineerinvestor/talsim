@@ -6,17 +6,24 @@ noncompliant ones, and applies wash-sale disallowance itself. The policy
 layer separately tries to avoid wash sales; the ledger guarantees that a
 violation never manufactures a deductible loss.
 
-Wash-sale mechanics implemented here, per the shape of IRC 1091 and IRS
-Publication 550:
+Wash-sale mechanics, per the shape of IRC 1091 and IRS Publication 550:
 
-- A loss on a sale is disallowed to the extent substantially identical
-  shares are acquired within the window before or after the sale (the
-  statute's 30 days; here a configurable number of steps derived from the
-  simulation cadence, always rounded up so the model never under-blocks).
-- The disallowed loss is added to the basis of the replacement shares, and
-  the replacement lot's holding period tacks back to the original lot's.
-- Matching is share-for-share: a replacement share can absorb wash from at
-  most one loss share and vice versa.
+- A loss is disallowed to the extent substantially identical shares are
+  acquired within the window before or after the sale (the statute's 30
+  days; here a configurable number of steps derived from the simulation
+  cadence, always rounded up so the model never under-blocks).
+- Matching is share-for-share in acquisition order. When only part of a
+  replacement lot matches, the lot is SPLIT: the matched shares become
+  their own lot carrying the transferred basis and the tacked holding
+  period, while the unmatched shares keep their original basis and date.
+- A share can serve as a replacement only once.
+
+Payments in lieu of dividends on short positions accrue per lot. When a
+short is closed, its accrued payments in lieu are capitalized into the
+basis of the shares used to close only if the short was held 45 days or
+less (Pub 550); payments on longer-held shorts get no tax benefit here,
+a deliberate conservatism until an investment-interest deduction bucket
+(with its own limitations) exists.
 
 Simplifications, stated plainly:
 
@@ -36,6 +43,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+PIL_CAPITALIZATION_MAX_DAYS = 45.0
+
 
 @dataclass
 class Lot:
@@ -43,8 +52,11 @@ class Lot:
     shares: float  # always positive; side is carried by the book
     basis_per_share: float  # for shorts, the sale price received at open
     open_step: int
-    # Shares of this lot that have already served as wash-sale replacements.
-    wash_absorbed: float = 0.0
+    # True once this lot's shares have served as wash-sale replacements;
+    # a share can absorb a wash only once.
+    was_replacement: bool = False
+    # Accrued payments in lieu of dividends (short lots only).
+    pil_accrued: float = 0.0
 
 
 @dataclass
@@ -61,10 +73,25 @@ class Realized:
     disallowed: float = 0.0  # wash-disallowed loss, stored positive
     washed_shares: float = 0.0  # loss shares already matched to replacements
 
+    def unwashed_loss_shares(self) -> float:
+        pre_gain = self.gain - self.disallowed
+        if pre_gain >= 0:
+            return 0.0
+        return self.shares - self.washed_shares
+
+    def loss_per_share(self) -> float:
+        pre_gain = self.gain - self.disallowed
+        return -pre_gain / self.shares if pre_gain < 0 else 0.0
+
 
 @dataclass
 class LotBook:
-    """Inventory for one side (long or short) across all assets."""
+    """Inventory for one side (long or short) across all assets.
+
+    Lot lists remain in acquisition order at all times; HIFO share
+    selection sorts a view, never the list itself, because wash-sale
+    matching must walk purchases chronologically.
+    """
 
     side: str  # "long" | "short"
     steps_per_year: int
@@ -91,15 +118,18 @@ class Ledger:
 
     def __init__(self, steps_per_year: int, wash_window_days: int = 30) -> None:
         self.steps_per_year = steps_per_year
-        step_days = 365.0 / steps_per_year
+        self.step_days = 365.0 / steps_per_year
         # Round up: the model may over-block, never under-block.
-        self.wash_window_steps = max(1, math.ceil(wash_window_days / step_days))
+        self.wash_window_steps = max(1, math.ceil(wash_window_days / self.step_days))
         self.longs = LotBook("long", steps_per_year)
         self.shorts = LotBook("short", steps_per_year)
         self.realized: list[Realized] = []
 
     def book(self, side: str) -> LotBook:
         return self.longs if side == "long" else self.shorts
+
+    def held_days(self, lot: Lot, step: int) -> float:
+        return (step - lot.open_step) * self.step_days
 
     # ------------------------------------------------------------------
     # Trade entry points
@@ -110,7 +140,21 @@ class Ledger:
             raise ValueError("open() requires positive shares")
         lot = Lot(asset, shares, price, step)
         self.book(side).lots.setdefault(asset, []).append(lot)
-        self._wash_forward(side, asset, lot, step)
+        # Forward wash: the new purchase replaces recent unmatched loss
+        # sales, oldest first. Records are step-ordered, so scan back only
+        # to the window edge, then process forward chronologically.
+        recent: list[Realized] = []
+        for rec in reversed(self.realized):
+            if step - rec.step > self.wash_window_steps:
+                break
+            if rec.asset == asset and rec.side == side:
+                recent.append(rec)
+        for rec in reversed(recent):
+            if lot.shares <= 1e-12 or lot.was_replacement:
+                break
+            if rec.unwashed_loss_shares() <= 1e-12:
+                continue
+            lot = self._match(side, asset, lot, rec)
 
     def close(
         self,
@@ -119,17 +163,13 @@ class Ledger:
         shares: float,
         price: float,
         step: int,
-        extra_basis_per_share: float = 0.0,
         prefer_gains: bool = False,
     ) -> list[Realized]:
         """Close up to `shares` using tax-minimizing (HIFO-style) selection.
 
-        `extra_basis_per_share` implements the Pub 550 treatment of accrued
-        payments in lieu on shorts: it raises the basis of the shares used
-        to close, reducing the taxable gain (or deepening the loss).
-        `prefer_gains` reverses the selection order: a risk-driven reduction
-        of a recently bought position sells gain lots first, so it realizes
-        washable losses only when it runs out of gains to sell.
+        `prefer_gains` reverses the selection order: a risk-driven
+        reduction of a recently bought position sells gain lots first, so
+        it realizes washable losses only when it runs out of gains.
         """
         if shares <= 0:
             raise ValueError("close() requires positive shares")
@@ -138,41 +178,58 @@ class Ledger:
         if not inventory:
             raise KeyError(f"no {side} lots for asset {asset}")
 
+        def pil_ps(lot: Lot) -> float:
+            """Capitalizable payments in lieu per share (shorts, <=45 days)."""
+            if side != "short" or lot.shares <= 0 or lot.pil_accrued <= 0:
+                return 0.0
+            if self.held_days(lot, step) > PIL_CAPITALIZATION_MAX_DAYS:
+                return 0.0
+            return lot.pil_accrued / lot.shares
+
         def per_share_gain(lot: Lot) -> float:
             if side == "long":
                 return price - lot.basis_per_share
-            return lot.basis_per_share - price - extra_basis_per_share
+            return lot.basis_per_share - price - pil_ps(lot)
 
-        inventory.sort(key=per_share_gain, reverse=prefer_gains)
+        # Selection order is a sorted VIEW; the inventory list itself stays
+        # in acquisition order for wash chronology.
+        order = sorted(inventory, key=per_share_gain, reverse=prefer_gains)
         out: list[Realized] = []
         remaining = shares
-        while remaining > 1e-12 and inventory:
-            lot = inventory[0]
+        for lot in order:
+            if remaining <= 1e-12:
+                break
             take = min(lot.shares, remaining)
+            extra_ps = pil_ps(lot)
             gain = take * per_share_gain(lot)
             if side == "long":
                 proceeds = take * price
                 basis = take * lot.basis_per_share
-                held_steps = step - lot.open_step
-                term = "lt" if held_steps >= self.steps_per_year else "st"
+                term = "lt" if self.held_days(lot, step) >= 365.0 else "st"
             else:
                 proceeds = take * lot.basis_per_share
-                basis = take * (price + extra_basis_per_share)
+                basis = take * (price + extra_ps)
                 term = "st"
             rec = Realized(asset, side, take, proceeds, basis, gain, term, step, lot.open_step)
+            # Accrued PIL leaves with the shares whether or not capitalized.
+            if lot.shares > 0:
+                lot.pil_accrued *= max(0.0, 1 - take / lot.shares)
             lot.shares -= take
-            lot.wash_absorbed = min(lot.wash_absorbed, lot.shares)
             remaining -= take
-            if lot.shares <= 1e-12:
-                inventory.pop(0)
-            if rec.gain < 0:
-                self._wash_backward(side, asset, rec, step)
             self.realized.append(rec)
             out.append(rec)
+        book.lots[asset] = [lot for lot in inventory if lot.shares > 1e-12]
         if remaining > 1e-9:
             raise ValueError(
                 f"tried to close {shares} shares of asset {asset}, only {shares - remaining} held"
             )
+        # Wash matching runs after the whole close: a mid-loop lot split
+        # would move shares into lots invisible to the sorted selection
+        # view above. All of this close's sales share one step, so the
+        # deferred matching is chronologically identical.
+        for rec in out:
+            if rec.gain < 0:
+                self._wash_backward(side, asset, rec, step)
         return out
 
     # ------------------------------------------------------------------
@@ -180,65 +237,76 @@ class Ledger:
     # ------------------------------------------------------------------
 
     def _wash_backward(self, side: str, asset: int, rec: Realized, step: int) -> None:
-        """A fresh loss looks back: shares bought in the window and still
-        held are replacements; the matched loss is disallowed and moves
-        into the replacement lots' basis."""
-        loss_per_share = -rec.gain / rec.shares
-        for lot in self.book(side).lots.get(asset, []):
-            if rec.washed_shares >= rec.shares - 1e-12:
+        """A fresh loss looks back: shares bought within the window and
+        still held are replacements, matched in acquisition order."""
+        inventory = self.book(side).lots.get(asset, [])
+        # Walk a snapshot in acquisition order; _match may split lots and
+        # insert into the inventory, which must not disturb this walk.
+        for lot in list(inventory):
+            if rec.unwashed_loss_shares() <= 1e-12:
                 break
+            if lot.shares <= 1e-12 or lot.was_replacement:
+                continue
             if step - lot.open_step > self.wash_window_steps:
                 continue
-            capacity = lot.shares - lot.wash_absorbed
-            if capacity <= 1e-12:
-                continue
-            match = min(capacity, rec.shares - rec.washed_shares)
-            disallow = loss_per_share * match
-            rec.gain += disallow
-            rec.disallowed += disallow
-            rec.washed_shares += match
-            lot.basis_per_share += disallow / lot.shares
-            lot.wash_absorbed += match
-            lot.open_step = min(lot.open_step, rec.open_step)  # holding period tacks
+            self._match(side, asset, lot, rec)
 
-    def _wash_forward(self, side: str, asset: int, lot: Lot, step: int) -> None:
-        """A fresh purchase looks back at recent loss sales: it is a
-        replacement for any unmatched loss shares sold within the window."""
-        for rec in reversed(self.realized):
-            if lot.shares - lot.wash_absorbed <= 1e-12:
-                break
-            if step - rec.step > self.wash_window_steps:
-                break  # realized list is step-ordered; older records only
-            if rec.asset != asset or rec.side != side:
-                continue
-            pre_gain = rec.gain - rec.disallowed
-            if pre_gain >= 0 or rec.washed_shares >= rec.shares - 1e-12:
-                continue
-            loss_per_share = -pre_gain / rec.shares
-            match = min(lot.shares - lot.wash_absorbed, rec.shares - rec.washed_shares)
-            disallow = loss_per_share * match
-            rec.gain += disallow
-            rec.disallowed += disallow
-            rec.washed_shares += match
-            lot.basis_per_share += disallow / lot.shares
-            lot.wash_absorbed += match
+    def _match(self, side: str, asset: int, lot: Lot, rec: Realized) -> Lot:
+        """Match up to a full lot against a loss record.
+
+        On a partial match the lot is split: the matched shares become a
+        new lot with transferred basis and tacked holding period; the
+        remainder keeps its original basis and date. Returns the lot that
+        still holds unmatched shares (for the forward-wash caller).
+        """
+        loss_ps = rec.loss_per_share()
+        match = min(lot.shares, rec.unwashed_loss_shares())
+        if match <= 1e-12 or loss_ps <= 0:
+            return lot
+        rec.gain += loss_ps * match
+        rec.disallowed += loss_ps * match
+        rec.washed_shares += match
+
+        # The deferred loss moves into the replacement's basis so it is
+        # recognized when the replacement closes. For longs that means a
+        # HIGHER cost basis; for shorts, "basis" is the sale proceeds, so
+        # the deferred loss LOWERS it (a higher short basis would turn the
+        # deferred loss into a phantom future gain).
+        basis_shift = loss_ps if side == "long" else -loss_ps
+
+        inventory = self.book(side).lots.setdefault(asset, [])
+        if match >= lot.shares - 1e-12:
+            lot.basis_per_share += basis_shift
             lot.open_step = min(lot.open_step, rec.open_step)
+            lot.was_replacement = True
+            return lot
+        # Split: the matched sublot inherits a proportional share of any
+        # accrued payments in lieu.
+        matched = Lot(
+            asset,
+            match,
+            lot.basis_per_share + basis_shift,
+            min(lot.open_step, rec.open_step),
+            was_replacement=True,
+            pil_accrued=lot.pil_accrued * match / lot.shares,
+        )
+        lot.pil_accrued -= matched.pil_accrued
+        lot.shares -= match
+        inventory.insert(inventory.index(lot), matched)
+        return lot
 
     # ------------------------------------------------------------------
     # Policy-facing queries (avoidance, not enforcement)
     # ------------------------------------------------------------------
 
     def recent_open_shares(self, side: str, asset: int, step: int) -> float:
-        """Shares of (side, asset) opened within the window and still held."""
         return sum(
             lot.shares
             for lot in self.book(side).lots.get(asset, [])
-            if step - lot.open_step <= self.wash_window_steps
+            if step - lot.open_step <= self.wash_window_steps and not lot.was_replacement
         )
 
     def loss_sale_blocked(self, side: str, asset: int, step: int) -> bool:
-        """True when a loss sale of (side, asset) occurred within the window,
-        so re-entry would trigger disallowance."""
         for rec in reversed(self.realized):
             if step - rec.step > self.wash_window_steps:
                 break
@@ -251,8 +319,6 @@ class Ledger:
     # ------------------------------------------------------------------
 
     def realized_totals(self, from_step: int, to_step: int) -> tuple[float, float]:
-        """(short-term, long-term) realized gain in steps [from_step, to_step],
-        net of wash disallowance as currently recorded."""
         st = lt = 0.0
         for rec in self.realized:
             if from_step <= rec.step <= to_step:
@@ -263,7 +329,6 @@ class Ledger:
         return st, lt
 
     def gross_losses(self, from_step: int, to_step: int) -> float:
-        """Deductible realized losses (post-disallowance) in the step range."""
         return sum(
             -rec.gain for rec in self.realized if from_step <= rec.step <= to_step and rec.gain < 0
         )

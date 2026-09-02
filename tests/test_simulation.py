@@ -85,15 +85,44 @@ def test_negative_cash_accrues_debit_interest():
 # ---------------------------------------------------------------------------
 
 
-def test_250_150_is_infeasible_and_runs_pre_scaled():
+def test_250_150_is_infeasible_and_runs_net_preserving_extension():
     """A 250/150 book fails the maintenance floor before its first trade
-    (requirement 1.075 > equity 1.0), so under the deleverage response it
-    opens at the largest feasible scale instead of trading on impossible
-    capital, and it reports that scale."""
+    (requirement 1.075 > equity 1.0). The feasibility scaling keeps the
+    100% net core and shrinks only the long/short extension: with the 2%
+    buffer, e_max = (0.98 - 0.25) / 0.55 = 1.327, i.e. roughly 233/133."""
     cfg = small_cfg(long_exposure=2.5, short_exposure=1.5)
     r = run_path(cfg, seed=2)
     assert not r.feasible_at_inception
-    assert r.final_exposure_scale < 0.95
+    assert r.extension_scale == pytest.approx(1.327 / 1.5, abs=0.01)
+    # Net exposure stays near 1.0 despite the scaling.
+    assert abs((r.avg_long_exposure - r.avg_short_exposure) - 1.0) < 0.15
+
+
+def test_insolvency_terminates_the_path():
+    # Absurd costs guarantee ruin; the path must flag insolvency and stop
+    # rather than carry positions on negative equity.
+    cfg = small_cfg(
+        long_exposure=2.0,
+        short_exposure=1.0,
+        management_fee=0.5,
+        borrow_cost=0.9,
+    )
+    r = run_path(cfg, seed=1)
+    assert r.insolvent or r.ending_after_tax_wealth > 0
+
+
+def test_config_validation_rejects_nonsense():
+    for bad in (
+        dict(n_sectors=0),
+        dict(alpha_reference_active_gross=0),
+        dict(management_fee=-0.01),
+        dict(signal_autocorr=1.1),
+        dict(long_maintenance=-0.1),
+        dict(deleverage_buffer=0.0),
+        dict(harvest_exposure_floor=1.5),
+    ):
+        with pytest.raises(ValueError):
+            ScenarioConfig(**bad)
 
 
 def test_flag_mode_still_reports_deficiency():

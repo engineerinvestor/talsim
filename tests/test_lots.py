@@ -7,6 +7,10 @@ def make_ledger(**kwargs):
     return Ledger(steps_per_year=4, **kwargs)
 
 
+def make_monthly_ledger(**kwargs):
+    return Ledger(steps_per_year=12, **kwargs)
+
+
 def test_open_and_market_value():
     led = make_ledger()
     led.open("long", 0, 10, 100.0, step=0)
@@ -114,6 +118,13 @@ def test_short_side_wash_applies_to_reshorts():
     led.open("short", 0, 10, 110.0, step=5)  # immediate re-short
     assert recs[0].gain == pytest.approx(0.0)
     assert recs[0].disallowed == pytest.approx(100.0)
+    # The deferred loss LOWERS the replacement short's basis (its sale
+    # proceeds), so covering later at 110 recognizes the deferred $100
+    # loss rather than a phantom zero.
+    lot = led.shorts.lots[0][0]
+    assert lot.basis_per_share == pytest.approx(100.0)
+    later = led.close("short", 0, 10, 110.0, step=8)
+    assert later[0].gain == pytest.approx(-100.0)
 
 
 def test_wash_window_rounds_up_for_finer_cadence():
@@ -123,13 +134,85 @@ def test_wash_window_rounds_up_for_finer_cadence():
     assert weekly.wash_window_steps == 5  # ceil(30 / 7.02)
 
 
-def test_short_close_extra_basis_reduces_gain():
-    """Accrued payments in lieu raise the basis of shares used to close."""
+def test_pil_capitalized_only_within_45_days():
+    """Pub 550: payments in lieu raise cover basis only when the short is
+    closed by day 45; longer-held shorts get no tax benefit here."""
     led = make_ledger()
     led.open("short", 0, 10, 100.0, step=0)
-    recs = led.close("short", 0, 10, 95.0, step=6, extra_basis_per_share=2.0)
-    # Gain would be 50 without the PIL basis adjustment; 10 * 2 reduces it.
+    led.shorts.lots[0][0].pil_accrued = 20.0
+    # Same-step close: held 0 days, capitalize: gain 50 - 20 = 30.
+    recs = led.close("short", 0, 10, 95.0, step=0)
     assert recs[0].gain == pytest.approx(30.0)
+
+    led2 = make_ledger()
+    led2.open("short", 0, 10, 100.0, step=0)
+    led2.shorts.lots[0][0].pil_accrued = 20.0
+    # One quarterly step is ~91 days > 45: no capitalization.
+    recs = led2.close("short", 0, 10, 95.0, step=1)
+    assert recs[0].gain == pytest.approx(50.0)
+
+
+def test_partial_wash_splits_replacement_lot():
+    """The reviewer's counterexample. Buy 5 @ $100; later buy 10 @ $90;
+    sell the original 5 @ $90. Only five replacement shares absorb the
+    $50 wash: they carry basis $100 and the old holding period, while the
+    other five keep basis $90 and the new date. A later 5-share sale at
+    $95 must recognize a $25 long-term loss, not zero."""
+    led = make_ledger()
+    led.open("long", 0, 5, 100.0, step=0)
+    led.open("long", 0, 10, 90.0, step=4)
+    recs = led.close("long", 0, 5, 90.0, step=4)  # HIFO sells the $100 lot
+    assert recs[0].basis == pytest.approx(500.0)
+    assert recs[0].disallowed == pytest.approx(50.0)
+    assert recs[0].gain == pytest.approx(0.0)
+
+    lots = sorted(led.longs.lots[0], key=lambda lot: lot.basis_per_share)
+    assert len(lots) == 2
+    assert lots[0].shares == pytest.approx(5) and lots[0].basis_per_share == pytest.approx(90.0)
+    assert lots[0].open_step == 4 and not lots[0].was_replacement
+    assert lots[1].shares == pytest.approx(5) and lots[1].basis_per_share == pytest.approx(100.0)
+    assert lots[1].open_step == 0 and lots[1].was_replacement
+
+    later = led.close("long", 0, 5, 95.0, step=8)  # HIFO picks the loss lot
+    assert later[0].gain == pytest.approx(-25.0)
+    assert later[0].term == "lt"  # tacked holding period: 8 steps from 0
+
+
+def test_oversized_replacement_lot_partial_match():
+    """A 3-share loss against a 10-share replacement matches only 3."""
+    led = make_ledger()
+    led.open("long", 0, 3, 100.0, step=0)
+    recs = led.close("long", 0, 3, 90.0, step=5)
+    led.open("long", 0, 10, 90.0, step=5)
+    assert recs[0].disallowed == pytest.approx(30.0)
+    lots = sorted(led.longs.lots[0], key=lambda lot: lot.basis_per_share)
+    assert lots[0].shares == pytest.approx(7)
+    assert lots[0].basis_per_share == pytest.approx(90.0)
+    assert lots[1].shares == pytest.approx(3)
+    assert lots[1].basis_per_share == pytest.approx(100.0)
+
+
+def test_wash_matching_is_chronological_across_purchases():
+    """Two purchases inside the window: the earlier one absorbs first."""
+    led = make_ledger()
+    led.open("long", 0, 10, 100.0, step=0)
+    recs = led.close("long", 0, 10, 90.0, step=5)
+    led.open("long", 0, 4, 91.0, step=5)
+    led.open("long", 0, 4, 92.0, step=6)
+    assert recs[0].washed_shares == pytest.approx(8)
+    by_basis = sorted(led.longs.lots[0], key=lambda lot: lot.basis_per_share)
+    # 91-basis lot bought first: fully matched (+10 transfer).
+    assert by_basis[0].basis_per_share == pytest.approx(101.0)
+    assert by_basis[1].basis_per_share == pytest.approx(102.0)
+
+
+def test_monthly_cadence_uses_days_not_steps():
+    monthly = make_monthly_ledger()
+    monthly.open("long", 0, 10, 100.0, step=0)
+    st = monthly.close("long", 0, 5, 120.0, step=11)  # ~334 days
+    lt = monthly.close("long", 0, 5, 120.0, step=12)  # ~365 days
+    assert st[0].term == "st"
+    assert lt[0].term == "lt"
 
 
 def test_policy_queries():

@@ -106,6 +106,34 @@ class ScenarioConfig:
             raise ValueError("margin_response must be 'deleverage' or 'flag'")
         if self.wash_window_days < 1:
             raise ValueError("wash_window_days must be >= 1")
+        if self.n_sectors < 1:
+            raise ValueError("n_sectors must be >= 1")
+        if self.alpha_reference_active_gross <= 0:
+            raise ValueError("alpha_reference_active_gross must be positive")
+        if not 0 <= self.signal_autocorr < 1:
+            raise ValueError("signal_autocorr must be in [0, 1)")
+        for name in (
+            "market_vol",
+            "sector_vol",
+            "idio_vol",
+            "dividend_yield",
+            "management_fee",
+            "borrow_cost",
+            "transaction_cost",
+            "debit_rate",
+            "cash_rate",
+            "harvest_threshold",
+            "rebalance_band",
+        ):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be non-negative")
+        for name in ("long_maintenance", "short_maintenance"):
+            if not 0 <= getattr(self, name) < 1:
+                raise ValueError(f"{name} must be in [0, 1)")
+        if not 0 < self.deleverage_buffer <= 1:
+            raise ValueError("deleverage_buffer must be in (0, 1]")
+        if not 0 <= self.harvest_exposure_floor <= 1:
+            raise ValueError("harvest_exposure_floor must be in [0, 1]")
 
     @property
     def gross_exposure(self) -> float:

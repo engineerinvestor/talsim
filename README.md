@@ -8,7 +8,7 @@ A research simulator for **tax-aware long-short (TALS)** portfolio strategies: l
 
 The question it exists to answer: **when does additional long-short leverage create usable after-tax value, and when does it merely create more turnover, risk, cost, and deferred tax?**
 
-> **Status: v0.2.0, experimental research software.** The engine is synthetic
+> **Status: v0.3.0, experimental research software.** The engine is synthetic
 > and its tax accounting is a documented approximation. Results are
 > conditional on stated assumptions and are not evidence about any real
 > strategy. Do not use this for personal financial decisions.
@@ -56,7 +56,7 @@ evidence about any real strategy.
 
 ```bash
 pip install -e ".[dev]"
-pytest            # 42 tests, including regression tests for past accounting defects
+pytest            # 51 tests: unit, regression, and property-based (hypothesis)
 ```
 
 ## Quick start
@@ -112,11 +112,11 @@ More harvested losses are not more wealth. Every report distinguishes:
 
 ## Model mechanics (v0.2.0)
 
-- **Wash sales are enforced in the ledger**, both directions of the window (purchases before or after a loss sale), share-matched, with basis transfer and holding-period tacking. The window is expressed in steps, always rounded up, so a coarser cadence over-blocks and never under-blocks. The policy layer independently avoids washes: it will not harvest a freshly bought name, it waits out the window before re-entering, it redistributes blocked exposure to substitute names (capped per name), and risk-driven reductions of recent buys sell gain lots first.
+- **Wash sales are enforced in the ledger**, both directions of the window, share-matched **in acquisition order with lot splitting**: when only part of a replacement lot matches, the matched shares become their own sublot carrying the transferred basis and tacked holding period, while unmatched shares keep their original basis and date. Short-side replacements have the deferred loss subtracted from their basis (sale proceeds), never added. The window is expressed in steps, always rounded up. The policy layer independently avoids washes: it will not harvest a freshly bought name, it waits out the window before re-entering, redistributes blocked exposure to substitute names (capped per name), and risk-driven reductions of recent buys sell gain lots first.
 - **Exposure is constructed from post-trade state per side**, never signed drift, so short-to-long transitions land on target. A harvest floor prevents a side from flattening itself when every position is at a loss at once. Realized net exposure error is recorded per path.
-- **Dividends are ordinary income**, split qualified/non-qualified by a holding-period proxy, taxed annually in their own buckets; capital losses never absorb them beyond the statutory ordinary offset. Payments in lieu on shorts are paid in cash and added to the basis of shares used to close (the Pub 550 treatment for shorts held 45 days or less).
+- **Dividends are ordinary income**, split qualified/non-qualified by a day-based holding test (61 days, a proxy for the statutory 60-days-in-121 rule, correct at any cadence), taxed annually in their own buckets; capital losses never absorb them beyond the statutory ordinary offset. **Payments in lieu accrue per short lot** and are capitalized into cover basis only when the short is closed within 45 days (Pub 550); longer-held PIL gets no tax benefit, a deliberate conservatism until an investment-interest bucket exists.
 - **Negative cash accrues debit interest** (default 6%); positive cash earns a configurable rate (default zero, deliberately conservative).
-- **Margin** is a strategy-level maintenance test at FINRA Rule 4210 floor levels (25% long / 30% short). Under the default response, a deficiency triggers forced proportional deleveraging through the ledger, with transaction costs and real tax consequences, and the book's exposure scale shrinks permanently (no re-levering on impossible capital). A book that is infeasible at inception, like 250/150 under floor requirements, opens at the largest feasible scale and reports it (`final_exposure_scale`). A "flag" mode records deficiencies without responding; its results should never be described as implementable.
+- **Margin** is a strategy-level maintenance test at FINRA Rule 4210 percentage floors (25% long / 30% short; the rule's per-share short minima for low-priced stocks are not modeled). Feasibility scaling **preserves net exposure**: an infeasible book keeps its long-only core and shrinks the long/short extension equally, so 250/150 at floor requirements runs as roughly 233/133 (`extension_scale` reports the shrinkage) and every book in a sweep compares at the same market exposure. A deficiency during the path is cured by trading back to the compliant target fractions, with transaction costs and tax consequences; nonpositive equity ends the path in an explicit insolvent state. A "flag" mode records deficiencies without responding; its results should never be described as implementable. Actual average long and short exposures are reported per path.
 - **Alpha**, when configured, enters as signal-proportional return drift calibrated at inception; the equal-weight 100/0 baseline has no active positions and receives none.
 - **Tracking error** is measured against an investable equal-weight portfolio of the same universe, and includes cost and tax drag. **Turnover** is one-sided (traded dollars / 2) over average NAV per year, excluding initial construction and terminal liquidation.
 
@@ -145,6 +145,19 @@ talsim/
 ```
 
 ## Changelog
+
+**0.3.0** — Second correctness release following a follow-up external
+review. Partial wash-sale matches now SPLIT replacement lots (matched
+shares get the basis transfer and tacked holding period; unmatched shares
+keep their own), matching walks purchases chronologically instead of the
+HIFO-sorted view, and a property-based test suite caught and fixed a
+short-side sign error in basis transfer (deferred losses now reduce a
+replacement short's basis). Payments in lieu accrue per lot and respect
+the 45-day capitalization boundary; dividend qualification and holding
+periods are day-based at any cadence; margin feasibility scaling preserves
+net exposure (250/150 runs as ~233/133); nonpositive equity is an explicit
+insolvency state; configuration and CLI inputs are validated; mypy runs in
+CI. Results produced by 0.2.0 should be discarded.
 
 **0.2.0** — Correctness release following external review. Wash-sale
 enforcement moved into the ledger (the previous policy-only check allowed

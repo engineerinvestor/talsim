@@ -244,16 +244,14 @@ def execute_plan(
     prices: np.ndarray,
     ledger: Ledger,
     step: int,
-    short_extra_basis: dict[int, float] | None = None,
 ) -> tuple[list[Realized], float, float]:
     """Execute against the ledger. Returns (realized, traded $, cash delta).
 
     Closes run before opens so freed cash funds the additions and so the
     ledger sees loss sales before any same-step replacement purchase.
-    `short_extra_basis` carries per-share accrued payments in lieu, added to
-    the basis of shares used to close each short.
+    Payments in lieu accrue on short lots inside the ledger, which applies
+    the 45-day capitalization rule itself at close.
     """
-    extra = short_extra_basis or {}
     realized: list[Realized] = []
     traded = 0.0
     cash_delta = 0.0
@@ -278,7 +276,7 @@ def execute_plan(
                 shares,
                 prices[asset],
                 step,
-                extra_basis_per_share=extra.get(asset, 0.0),
+                prefer_gains=("short", asset) in plan.prefer_gains,
             )
         )
         traded += shares * prices[asset]

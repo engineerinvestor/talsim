@@ -1,0 +1,51 @@
+{
+  "base_seed": 7,
+  "command": "leverage_sweep",
+  "configs": {
+    "default": {
+      "alpha_annual": 0.0,
+      "alpha_reference_active_gross": 1.0,
+      "borrow_cost": 0.0075,
+      "cash_rate": 0.0,
+      "debit_rate": 0.06,
+      "deleverage_buffer": 0.98,
+      "dividend_yield": 0.013,
+      "harvest_exposure_floor": 0.6,
+      "harvest_threshold": 0.02,
+      "idio_vol": 0.25,
+      "long_exposure": 1.0,
+      "long_maintenance": 0.25,
+      "lt_rate": 0.238,
+      "management_fee": 0.0045,
+      "margin_response": "deleverage",
+      "market_drift": 0.06,
+      "market_vol": 0.16,
+      "n_assets": 36,
+      "n_sectors": 4,
+      "ordinary_offset_limit": 3000.0,
+      "ordinary_rate": 0.408,
+      "outside_st_gain_events": {},
+      "outside_st_gains_annual": 100000.0,
+      "rebalance_band": 0.005,
+      "sector_vol": 0.08,
+      "short_exposure": 0.0,
+      "short_maintenance": 0.3,
+      "signal_autocorr": 0.9,
+      "st_rate": 0.408,
+      "starting_capital": 1000000.0,
+      "steps_per_year": 4,
+      "transaction_cost": 0.0005,
+      "wash_window_days": 30,
+      "years": 10
+    }
+  },
+  "file_checksums": {
+    "leverage_sweep.csv": "5f78a1db6001a427c491c00d319970f9430196843394d772ebecb37e9eb9b8a7",
+    "leverage_sweep_paths.csv": "38564b88f80ce637253c4c06a809859fdb0860de3af62f7e6c8dc1eb1eb5bf6e"
+  },
+  "git_commit": "3d02faeee770f3aad3334f4a344066c6f63a2750",
+  "numpy_version": "2.5.2",
+  "paths": 200,
+  "python_version": "3.12.11",
+  "talsim_version": "0.2.0"
+}
