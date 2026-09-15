@@ -97,7 +97,7 @@ fig.text(
     0.05,
     0.86,
     "Median terminal after-tax wealth, $1M start, 10 years, full liquidation, "
-    "200 common market paths, talsim v0.4",
+    "200 common market paths, talsim v0.5",
     fontsize=15,
     color=MUTED,
     ha="left",
@@ -106,7 +106,7 @@ fig.text(
 fig.text(
     0.05,
     0.05,
-    "*250/150 target; the FINRA-floor margin model runs it as roughly 233/133. "
+    "Portfolio-margin account; every book runs at its nominal size. "
     "Synthetic research results conditional on stated assumptions; not a forecast.",
     fontsize=12,
     color=MUTED,

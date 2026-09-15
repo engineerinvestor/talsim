@@ -85,12 +85,12 @@ def test_negative_cash_accrues_debit_interest():
 # ---------------------------------------------------------------------------
 
 
-def test_250_150_is_infeasible_and_runs_net_preserving_extension():
-    """A 250/150 book fails the maintenance floor before its first trade
-    (requirement 1.075 > equity 1.0). The feasibility scaling keeps the
-    100% net core and shrinks only the long/short extension: with the 2%
-    buffer, e_max = (0.98 - 0.25) / 0.55 = 1.327, i.e. roughly 233/133."""
-    cfg = small_cfg(long_exposure=2.5, short_exposure=1.5)
+def test_250_150_is_infeasible_at_reg_t_floors_and_runs_net_preserving_extension():
+    """Under the Reg T maintenance floors a 250/150 book fails before its
+    first trade (requirement 1.075 > equity 1.0). The feasibility scaling
+    keeps the 100% net core and shrinks only the long/short extension: with
+    the 2% buffer, e_max = (0.98 - 0.25) / 0.55 = 1.327, i.e. roughly 233/133."""
+    cfg = small_cfg(long_exposure=2.5, short_exposure=1.5, margin_model="reg_t")
     r = run_path(cfg, seed=2)
     assert not r.feasible_at_inception
     assert r.extension_scale == pytest.approx(1.327 / 1.5, abs=0.01)
@@ -135,10 +135,14 @@ def test_infeasible_net_core_is_rejected_in_deleverage_mode():
     shrink; the validator must refuse it rather than let the margin
     response silently fail."""
     with pytest.raises(ValueError):
-        ScenarioConfig(long_exposure=5.0, short_exposure=0.0)
+        ScenarioConfig(long_exposure=5.0, short_exposure=0.0, margin_model="reg_t")
+    # Portfolio margin at 15% stress needs 75%: feasible.
+    ScenarioConfig(long_exposure=5.0, short_exposure=0.0)
+    with pytest.raises(ValueError):
+        ScenarioConfig(long_exposure=7.0, short_exposure=0.0)
     # The same book is representable in flag mode, which never claims to cure.
-    cfg = ScenarioConfig(long_exposure=5.0, short_exposure=0.0, margin_response="flag")
-    assert cfg.gross_exposure == pytest.approx(5.0)
+    cfg = ScenarioConfig(long_exposure=7.0, short_exposure=0.0, margin_response="flag")
+    assert cfg.gross_exposure == pytest.approx(7.0)
 
 
 def test_config_validation_rejects_nonsense():
@@ -148,6 +152,9 @@ def test_config_validation_rejects_nonsense():
         dict(management_fee=-0.01),
         dict(signal_autocorr=1.1),
         dict(long_maintenance=-0.1),
+        dict(margin_model="house"),
+        dict(pm_stress=1.0),
+        dict(rebalance_band=-0.001),
         dict(deleverage_buffer=0.0),
         dict(harvest_exposure_floor=1.5),
         dict(management_fee=float("nan")),
@@ -171,10 +178,111 @@ def test_config_validation_rejects_nonsense():
 
 
 def test_flag_mode_still_reports_deficiency():
-    cfg = small_cfg(long_exposure=2.5, short_exposure=1.5, margin_response="flag")
+    cfg = small_cfg(
+        long_exposure=2.5, short_exposure=1.5, margin_response="flag", margin_model="reg_t"
+    )
     r = run_path(cfg, seed=2)
     assert r.maintenance_deficiency_observed
     assert r.deleverage_events == 0
+
+
+def test_portfolio_margin_runs_250_150_at_full_size():
+    """Portfolio margin at 15% stress needs 60% of equity for 250/150, so the
+    book is feasible and runs unscaled with a 40% cushion at inception."""
+    cfg = small_cfg(long_exposure=2.5, short_exposure=1.5)
+    assert cfg.maintenance_coefficients() == (0.15, 0.15)
+    r = run_path(cfg, seed=2)
+    assert r.feasible_at_inception
+    assert r.extension_scale == 1.0
+    assert r.min_margin_excess_ratio < 0.40 + 1e-9
+    assert abs(r.avg_long_exposure - 2.5) < 0.15
+    assert abs(r.avg_short_exposure - 1.5) < 0.15
+    reg_t = small_cfg(long_exposure=2.5, short_exposure=1.5, margin_model="reg_t")
+    assert reg_t.maintenance_coefficients() == (0.25, 0.30)
+
+
+# ---------------------------------------------------------------------------
+# Dividends, payments in lieu, and the investment interest deduction.
+# ---------------------------------------------------------------------------
+
+
+def test_net_dividend_income_is_net_exposure_times_yield():
+    """Longs receive and shorts pay the same yield on market value, so
+    dividends minus PIL equals net exposure times yield on NAV: the same
+    pre-tax dividend income for every net-100 book, whatever the gross."""
+    for book in ((1.0, 0.0), (1.5, 0.5), (2.5, 1.5)):
+        cfg = small_cfg(
+            long_exposure=book[0], short_exposure=book[1], n_assets=36, margin_response="flag"
+        )
+        r = run_path(cfg, seed=3)
+        assert r.net_dividend_income == pytest.approx(r.dividends_received - r.payments_in_lieu)
+        expected = cfg.dividend_yield * r.average_nav * cfg.years
+        # Dividends accrue on pre-rebalance market values and the cash
+        # account is a few percent of NAV, so the identity holds to within
+        # the realized net-exposure error.
+        assert r.net_dividend_income == pytest.approx(expected, rel=0.15)
+
+
+def test_quarterly_pil_is_all_investment_interest_and_deducted():
+    """At quarterly cadence a short is open 91 days by its first possible
+    close, so nothing capitalizes: every dollar of PIL plus debit interest
+    is investment interest. It is deducted up to net investment income (a
+    harvester nets away its own short-term gains, so a small household
+    carries most of it forward) and fully when the household books enough
+    outside short-term gains."""
+    cfg = small_cfg(long_exposure=1.5, short_exposure=0.5, outside_st_gains_annual=500_000.0)
+    r = run_path(cfg, seed=4)
+    assert r.payments_in_lieu > 0
+    assert r.payments_in_lieu_capitalized == 0.0
+    expected = r.payments_in_lieu + r.debit_interest
+    assert r.investment_interest_deducted == pytest.approx(expected, rel=1e-9)
+    assert r.unused_investment_interest_carry == pytest.approx(0.0, abs=1e-6)
+    assert r.investment_interest_benefit == pytest.approx(expected * cfg.ordinary_rate)
+
+    small = run_path(small_cfg(long_exposure=1.5, short_exposure=0.5), seed=4)
+    total = small.investment_interest_deducted + small.unused_investment_interest_carry
+    assert total == pytest.approx(small.payments_in_lieu + small.debit_interest, rel=1e-9)
+    assert small.unused_investment_interest_carry > 0
+
+    off = run_path(
+        small_cfg(
+            long_exposure=1.5,
+            short_exposure=0.5,
+            outside_st_gains_annual=500_000.0,
+            deduct_investment_interest=False,
+        ),
+        seed=4,
+    )
+    assert off.investment_interest_deducted == 0.0
+    assert off.investment_interest_benefit == 0.0
+    gain = r.ending_after_tax_wealth - off.ending_after_tax_wealth
+    assert 0 < gain <= r.investment_interest_benefit * 1.5
+
+
+def test_monthly_cadence_capitalizes_some_pil():
+    cfg = small_cfg(long_exposure=1.5, short_exposure=0.5, steps_per_year=12)
+    r = run_path(cfg, seed=4)
+    assert r.payments_in_lieu_capitalized > 0
+    assert r.payments_in_lieu_capitalized < r.payments_in_lieu
+    assert (
+        r.investment_interest_deducted
+        <= r.payments_in_lieu - r.payments_in_lieu_capitalized + r.debit_interest + 1e-6
+    )
+
+
+def test_rebalance_band_scales_with_the_universe():
+    """A band fixed at 0.5% of NAV exceeds an equal-weight position once the
+    universe passes 36 names and silently stops a 100/0 book from building.
+    The default band is 0.18 / n_assets of NAV: 0.5% at 36 names."""
+    assert ScenarioConfig(n_assets=36).band_fraction == pytest.approx(0.005)
+    assert ScenarioConfig(n_assets=500).band_fraction == pytest.approx(0.00036)
+    assert ScenarioConfig(rebalance_band=0.01).band_fraction == 0.01
+    cfg = ScenarioConfig(years=2, n_assets=500)
+    r = run_path(cfg, seed=1)
+    assert abs(r.avg_long_exposure - 1.0) < 0.1
+    assert r.annual_turnover > 0
+    stuck = ScenarioConfig(years=2, n_assets=500, rebalance_band=0.005)
+    assert run_path(stuck, seed=1).avg_long_exposure < 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +455,20 @@ def test_long_only_gets_no_alpha():
     lifted = run_path(ScenarioConfig(**quiet, alpha_annual=0.02), seed=1)
     ratio = lifted.ending_after_tax_wealth / base.ending_after_tax_wealth
     assert ratio == pytest.approx(1.0, abs=1e-6)
+
+
+def test_legacy_configuration_reproduces_0_4_1_results():
+    """Reg T floors, the 36-name universe, the fixed 0.5% band, and no
+    interest deduction reproduce the 0.4.1 pinned-CI path results (saved as
+    a fixture), so every 0.5.0 result change is attributable to a named
+    modeling change."""
+    import json
+    from pathlib import Path
+
+    fixture = json.loads((Path(__file__).parent / "data/legacy_0_4_1_seed7.json").read_text())
+    legacy = ScenarioConfig(**fixture["config"])
+    for book, ref in fixture["paths"].items():
+        r = run_path(legacy.with_book(book), seed=ref["seed"])
+        assert r.ending_after_tax_wealth == pytest.approx(ref["ending_after_tax_wealth"], rel=1e-9)
+        assert r.extension_scale == pytest.approx(ref["extension_scale"])
+        assert r.tracking_error == pytest.approx(ref["tracking_error"], rel=1e-9)

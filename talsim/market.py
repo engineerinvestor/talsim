@@ -5,10 +5,14 @@ The cross-sectional signal follows an AR(1) so that rankings persist across
 rebalances, which is what gives a long-short book stable active positions
 (and therefore stable wash-sale interactions) rather than pure noise.
 
-This is a research market: no dividend-price interaction, no delistings,
-no corporate actions, and stationary parameters. Every result downstream is
-conditional on this process; that is a feature for controlled experiments
-and a limitation for empirical claims.
+This is a research market with stationary parameters and no delistings or
+corporate actions. Returns are ex-dividend PRICE returns: prices never drop
+on an ex-date. Dividends are layered on in the simulation as cash at the
+configured yield on market value, received on longs and paid in lieu on
+shorts, so a long and a short in the same name net to zero and a stock's
+expected total return (drift plus yield) equals a short's expected total
+cost. Every result downstream is conditional on this process; that is a
+feature for controlled experiments and a limitation for empirical claims.
 """
 
 from __future__ import annotations

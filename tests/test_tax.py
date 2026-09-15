@@ -92,3 +92,45 @@ def test_liquidation_tax_counterexample_from_review():
     t_without = cf.household_tax - cf.ordinary_offset * RATES["ordinary_rate"]
     t_with = fin.household_tax - fin.ordinary_offset * RATES["ordinary_rate"]
     assert t_with - t_without == pytest.approx(23_800.0)
+
+
+def test_investment_interest_deducted_against_net_investment_income():
+    """PIL on shorts past 45 days and debit interest are itemized deductions
+    limited to interest, non-qualified dividends, and net short-term gain;
+    the excess carries forward and qualified dividends do not count."""
+    r = settle_year(0, 0, 100_000, 0, 0, **RATES, investment_interest=20_000)
+    assert r.investment_interest_deducted == pytest.approx(20_000)
+    assert r.investment_interest_saving == pytest.approx(20_000 * 0.408)
+    assert r.carry_investment_interest == pytest.approx(0.0)
+    assert r.household_tax == pytest.approx(100_000 * 0.408 - 20_000 * 0.408)
+    # Benefit used is the capital-loss benefit only; the deduction is reported separately.
+    assert r.benefit_used == pytest.approx(0.0)
+
+    # Only $5k of NII (ordinary dividends): $15k carries forward.
+    r = settle_year(
+        0,
+        0,
+        0,
+        0,
+        0,
+        **RATES,
+        ordinary_dividends=5_000,
+        qualified_dividends=50_000,
+        investment_interest=20_000,
+    )
+    assert r.investment_interest_deducted == pytest.approx(5_000)
+    assert r.carry_investment_interest == pytest.approx(15_000)
+
+    # Portfolio losses that wipe out the outside gain leave no short-term NII.
+    r = settle_year(
+        -100_000, 0, 100_000, 0, 0, **RATES, investment_interest=8_000, interest_income=1_000
+    )
+    assert r.investment_interest_deducted == pytest.approx(1_000)
+    assert r.carry_investment_interest == pytest.approx(7_000)
+
+    # The carryforward is usable in a later year.
+    r = settle_year(0, 0, 100_000, 0, 0, **RATES, carry_investment_interest=7_000)
+    assert r.investment_interest_deducted == pytest.approx(7_000)
+
+    with pytest.raises(ValueError):
+        settle_year(0, 0, 0, 0, 0, **RATES, investment_interest=-1.0)

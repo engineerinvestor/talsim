@@ -23,9 +23,13 @@ Payments in lieu of dividends on short positions accrue per lot. When a
 short is closed, its accrued payments in lieu are capitalized into the
 basis of the shares used to close only if the short was actually open 45
 days or less (Pub 550), measured on the real open date even when a wash
-match tacked the tax holding clock; longer-held payments get no benefit,
-a deliberate conservatism until an investment-interest deduction bucket
-(with its own limitations) exists.
+match tacked the tax holding clock. Payments on a short open longer than
+45 days are investment interest expense: the ledger reports them in
+`pil_expensed` (a payment accrued after day 45 is expensed as it accrues,
+since the short can no longer close within the window; earlier payments
+are classified at close) and the settlement layer applies the IRC 163(d)
+deduction. At quarterly cadence every short is past day 45 by the first
+step it can close, so nothing capitalizes and everything is expensed.
 
 Simplifications, stated plainly:
 
@@ -135,6 +139,9 @@ class Ledger:
         self.longs = LotBook("long", steps_per_year)
         self.shorts = LotBook("short", steps_per_year)
         self.realized: list[Realized] = []
+        # Payments in lieu classified so far (cumulative, dollars).
+        self.pil_capitalized = 0.0
+        self.pil_expensed = 0.0
 
     def book(self, side: str) -> LotBook:
         if side == "long":
@@ -155,6 +162,22 @@ class Ledger:
         cadence. At quarterly steps, a same-step replacement is inside the
         window and the following quarter (91.25 days) is outside it."""
         return (later_step - earlier_step) * self.step_days <= self.wash_window_days
+
+    # ------------------------------------------------------------------
+    # Payments in lieu
+    # ------------------------------------------------------------------
+
+    def accrue_pil(self, lot: Lot, amount: float, step: int) -> float:
+        """Record a payment in lieu on a short lot. Returns the part
+        expensed now (investment interest); the rest waits on the lot for
+        classification at close."""
+        if amount < 0:
+            raise ValueError("payments in lieu are non-negative")
+        if self.held_days(lot, step) > PIL_CAPITALIZATION_MAX_DAYS:
+            self.pil_expensed += amount
+            return amount
+        lot.pil_accrued += amount
+        return 0.0
 
     # ------------------------------------------------------------------
     # Trade entry points
@@ -244,8 +267,14 @@ class Ledger:
                 basis = take * (price + extra_ps)
                 term = "st"
             rec = Realized(asset, side, take, proceeds, basis, gain, term, step, lot.tax_open_step)
-            # Accrued PIL leaves with the shares whether or not capitalized.
+            # Accrued PIL leaves with the shares: into cover basis when the
+            # short closed within 45 days, otherwise as investment interest.
             if lot.shares > 0:
+                leaving = lot.pil_accrued * min(1.0, take / lot.shares)
+                if extra_ps > 0:
+                    self.pil_capitalized += leaving
+                else:
+                    self.pil_expensed += leaving
                 lot.pil_accrued *= max(0.0, 1 - take / lot.shares)
             lot.shares -= take
             remaining -= take

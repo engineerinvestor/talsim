@@ -106,9 +106,9 @@ with tab_official:
 
     st.subheader("Terminal after-tax wealth by leverage")
     st.caption(
-        f"$1M for 10 years, quarterly steps, zero alpha, full liquidation; "
-        f"medians with 10th-90th percentile bands across {manifest['paths']} "
-        "common-random-number paths."
+        f"$1M for 10 years, quarterly steps, zero alpha, portfolio margin, "
+        f"full liquidation; medians with 10th-90th percentile bands across "
+        f"{manifest['paths']} common-random-number paths."
     )
     wealth = sweep[
         [
@@ -211,6 +211,29 @@ with tab_official:
             .properties(height=300),
             width="stretch",
         )
+        st.caption(
+            "Payments in lieu are a cash cost of the short book, but the long "
+            "extension earns dividends at the same yield, so net dividend "
+            "income is the same for every net-100 book (see below). The "
+            "asymmetry is tax: dividends are taxed, and PIL is deductible "
+            "only against net investment income."
+        )
+
+    income_cols = {
+        "dividends_received_median": "Dividends received",
+        "payments_in_lieu_median": "Payments in lieu",
+        "net_dividend_income_median": "Net dividend income",
+        "dividend_taxes_median": "Dividend taxes",
+        "investment_interest_deducted_median": "Interest deducted",
+        "investment_interest_benefit_median": "Tax saved by deduction",
+    }
+    if all(col in sweep.columns for col in income_cols):
+        st.subheader("Dividend income, payments in lieu, and the interest deduction")
+        income = sweep[["book", *income_cols]].rename(columns=income_cols).copy()
+        income = income.rename(columns={"book": "Book"})
+        for col in income_cols.values():
+            income[col] = income[col].map(usd)
+        st.dataframe(income, hide_index=True, width="stretch")
 
     st.subheader("Paired comparison vs. 100/0 on common paths")
     st.caption(
@@ -371,11 +394,20 @@ with tab_live:
                 "gross_losses_realized_median": "Gross losses",
                 "tax_benefit_used_median": "Benefit used",
                 "liquidation_tax_median": "Liquidation tax",
+                "net_dividend_income_median": "Net dividend income",
+                "investment_interest_benefit_median": "Interest deduction saved",
                 "tracking_error_median": "Tracking error",
                 "annual_turnover_median": "Turnover",
             }
             table = frame[list(show_cols)].rename(columns=show_cols).copy()
-            for col in ["Median wealth", "Gross losses", "Benefit used", "Liquidation tax"]:
+            for col in [
+                "Median wealth",
+                "Gross losses",
+                "Benefit used",
+                "Liquidation tax",
+                "Net dividend income",
+                "Interest deduction saved",
+            ]:
                 table[col] = table[col].map(usd)
             table["Tracking error"] = table["Tracking error"].map(lambda x: f"{x:.1%}")
             table["Turnover"] = table["Turnover"].map(lambda x: f"{x:.1f}x")

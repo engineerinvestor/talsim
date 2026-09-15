@@ -161,6 +161,31 @@ def test_pil_capitalized_only_within_45_days():
     # One quarterly step is ~91 days > 45: no capitalization.
     recs = led2.close("short", 0, 10, 95.0, step=1)
     assert recs[0].gain == pytest.approx(50.0)
+    assert led.pil_capitalized == pytest.approx(20.0)
+    assert led.pil_expensed == 0.0
+    assert led2.pil_capitalized == 0.0
+    assert led2.pil_expensed == pytest.approx(20.0)
+
+
+def test_pil_accrued_after_day_45_is_expensed_immediately():
+    """A payment on a short already open more than 45 days can never be
+    capitalized, so it is investment interest as it accrues; an earlier
+    payment waits on the lot to be classified at close."""
+    led = make_ledger()
+    led.open("short", 0, 10, 100.0, step=0)
+    lot = led.shorts.lots[0][0]
+    assert led.accrue_pil(lot, 4.0, step=0) == 0.0  # day 0: contingent
+    assert lot.pil_accrued == pytest.approx(4.0)
+    assert led.accrue_pil(lot, 6.0, step=1) == pytest.approx(6.0)  # day 91: expensed
+    assert lot.pil_accrued == pytest.approx(4.0)
+    assert led.pil_expensed == pytest.approx(6.0)
+    # Closing at day 91 expenses the contingent $4 too: nothing capitalizes.
+    recs = led.close("short", 0, 10, 95.0, step=1)
+    assert recs[0].gain == pytest.approx(50.0)
+    assert led.pil_expensed == pytest.approx(10.0)
+    assert led.pil_capitalized == 0.0
+    with pytest.raises(ValueError):
+        led.accrue_pil(lot, -1.0, step=1)
 
 
 def test_partial_wash_splits_replacement_lot():

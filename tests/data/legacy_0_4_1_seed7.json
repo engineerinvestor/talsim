@@ -1,0 +1,23 @@
+{
+  "source": "docs/results/leverage_sweep_paths.csv at v0.4.1 (commit 41d91fd, pinned CI, ubuntu-24.04, CPython 3.12.14)",
+  "config": {
+    "n_assets": 36,
+    "rebalance_band": 0.005,
+    "margin_model": "reg_t",
+    "deduct_investment_interest": false
+  },
+  "paths": {
+    "150/50": {
+      "seed": 7,
+      "ending_after_tax_wealth": 2393151.1991281663,
+      "extension_scale": 1.0,
+      "tracking_error": 0.09740912095249624
+    },
+    "250/150": {
+      "seed": 7,
+      "ending_after_tax_wealth": 4606610.74695832,
+      "extension_scale": 0.8848484848484848,
+      "tracking_error": 0.17056835310597201
+    }
+  }
+}

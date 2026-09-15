@@ -82,7 +82,7 @@ def plan_trades(
     step: int,
 ) -> TradePlan:
     plan = TradePlan()
-    band_dollars = cfg.rebalance_band * nav
+    band_dollars = cfg.band_fraction * nav
     n = cfg.n_assets
 
     # ------------------------------------------------------------------

@@ -57,3 +57,13 @@ def test_gross_targets_are_exact():
     w = target_weights(np.random.default_rng(2).standard_normal(36), 1.5, 0.5)
     assert w[w > 0].sum() == pytest.approx(1.5)
     assert -w[w < 0].sum() == pytest.approx(0.5)
+
+
+def test_large_universe_positions_are_diversified():
+    """At 500 names the rank tilt keeps every position under 2.5% of NAV
+    even for 250/150; at 36 names the same book puts 24% in one name."""
+    rng = np.random.default_rng(0)
+    w_big = target_weights(rng.standard_normal(500), 2.5, 1.5)
+    assert np.abs(w_big).max() < 0.025
+    w_small = target_weights(rng.standard_normal(36), 2.5, 1.5)
+    assert np.abs(w_small).max() > 0.2

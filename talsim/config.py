@@ -29,7 +29,7 @@ class ScenarioConfig:
     steps_per_year: int = 4  # quarterly rebalance and harvest
 
     # Universe and synthetic market (annualized parameters)
-    n_assets: int = 36
+    n_assets: int = 500
     n_sectors: int = 4
     market_drift: float = 0.06
     market_vol: float = 0.16
@@ -67,7 +67,12 @@ class ScenarioConfig:
 
     # Harvesting policy
     harvest_threshold: float = 0.02  # realize a lot's loss when >2% below basis
-    rebalance_band: float = 0.005  # ignore target drift smaller than 0.5% NAV
+    # Per-name no-trade band as a fraction of NAV. None scales the band with
+    # the equal-weight slot: 0.18 / n_assets, which is 0.5% of NAV at 36
+    # names. A band that does not scale with position size silently stops
+    # a large universe from trading at all (at 500 names a 0.5% band
+    # exceeds every equal-weight position).
+    rebalance_band: float | None = None
     wash_window_days: int = 30  # statutory window, compared in exact elapsed days
     # A side never harvests itself below this fraction of its exposure
     # target: when every short is at a loss at once, realizing them all
@@ -79,10 +84,23 @@ class ScenarioConfig:
     debit_rate: float = 0.06
     cash_rate: float = 0.0
 
-    # Margin model: strategy-level maintenance test at FINRA Rule 4210 floor
-    # levels (brokers set higher house requirements). When breached, the
-    # engine force-deleverages proportionally (with taxes and trading costs)
-    # instead of flagging and continuing on impossible capital.
+    # Investment interest expense (IRC 163(d)): payments in lieu on shorts
+    # open more than 45 days plus margin debit interest are deducted against
+    # net investment income at the ordinary rate, excess carried forward.
+    # False reproduces the pre-0.5 treatment (no deduction at all).
+    deduct_investment_interest: bool = True
+
+    # Margin model. "portfolio" is a risk-based (TIMS-style) requirement of
+    # pm_stress times gross market value, the account type every book above
+    # 150/50 actually lives in; 15% is the regulatory stress for individual
+    # equities and brokers set higher house levels. "reg_t" is the
+    # strategy-level maintenance test at FINRA Rule 4210 percentage floors
+    # (it ignores the 50% initial requirement, which would refuse any book
+    # above 150/50 outright). When breached, the engine force-deleverages
+    # proportionally (with taxes and trading costs) instead of flagging and
+    # continuing on impossible capital.
+    margin_model: str = "portfolio"  # "portfolio" | "reg_t"
+    pm_stress: float = 0.15
     long_maintenance: float = 0.25
     short_maintenance: float = 0.30
     margin_response: str = "deleverage"  # "deleverage" | "flag"
@@ -104,6 +122,12 @@ class ScenarioConfig:
                 raise ValueError("tax rates must be in [0, 1)")
         if self.margin_response not in ("deleverage", "flag"):
             raise ValueError("margin_response must be 'deleverage' or 'flag'")
+        if self.margin_model not in ("portfolio", "reg_t"):
+            raise ValueError("margin_model must be 'portfolio' or 'reg_t'")
+        if not 0 <= self.pm_stress < 1:
+            raise ValueError("pm_stress must be in [0, 1)")
+        if self.rebalance_band is not None and self.rebalance_band < 0:
+            raise ValueError("rebalance_band must be non-negative")
         if self.wash_window_days < 1:
             raise ValueError("wash_window_days must be >= 1")
         if self.n_sectors < 1:
@@ -123,7 +147,6 @@ class ScenarioConfig:
             "debit_rate",
             "cash_rate",
             "harvest_threshold",
-            "rebalance_band",
             "ordinary_offset_limit",
             "outside_st_gains_annual",
         ):
@@ -139,6 +162,8 @@ class ScenarioConfig:
         import math
 
         for field_name, value in vars(self).items():
+            if isinstance(value, bool):
+                continue
             if isinstance(value, int | float) and not math.isfinite(value):
                 raise ValueError(f"{field_name} must be finite, got {value!r}")
         # The event schedule is a dict, so the scalar checks above never see
@@ -157,7 +182,8 @@ class ScenarioConfig:
             if amount < 0:
                 raise ValueError(f"outside_st_gain_events[{year}] must be non-negative")
         if self.margin_response == "deleverage":
-            core_req = self.long_maintenance * (self.long_exposure - self.short_exposure)
+            long_coef, _ = self.maintenance_coefficients()
+            core_req = long_coef * (self.long_exposure - self.short_exposure)
             if core_req > self.deleverage_buffer:
                 raise ValueError(
                     "net core exposure alone violates the maintenance requirement; "
@@ -178,6 +204,19 @@ class ScenarioConfig:
     @property
     def n_steps(self) -> int:
         return self.years * self.steps_per_year
+
+    @property
+    def band_fraction(self) -> float:
+        """Per-name no-trade band as a fraction of NAV (see `rebalance_band`)."""
+        if self.rebalance_band is None:
+            return 0.18 / self.n_assets
+        return self.rebalance_band
+
+    def maintenance_coefficients(self) -> tuple[float, float]:
+        """(long, short) maintenance requirement per dollar of market value."""
+        if self.margin_model == "portfolio":
+            return self.pm_stress, self.pm_stress
+        return self.long_maintenance, self.short_maintenance
 
     def with_book(self, name: str) -> ScenarioConfig:
         """Return a copy of this config with a preset long/short book."""

@@ -10,15 +10,21 @@ Wealth accounting, stated once so every output is interpretable:
   outside gains, plus the ordinary-income offset) accrue to a side account
   that earns nothing. Ending after-tax wealth = liquidated NAV + side
   account. Crediting savings without growth is deliberate and conservative.
-- Dividends on longs are cash income, split into qualified (lots held at
-  least one step, a proxy for the 61-day requirement) and non-qualified
-  buckets, taxed annually at the preferential and ordinary rates
-  respectively. They are ordinary income: capital losses never net against
-  them beyond the statutory ordinary-income offset.
-- Payments in lieu on shorts are paid in cash as they accrue and added to
-  the basis of the shares used to close the short (the Pub 550 treatment
-  for shorts held 45 days or less), which reduces the taxable gain on the
-  cover rather than vanishing.
+- The market generates ex-dividend price returns. Dividends on longs are
+  cash income at the configured yield on market value, split into qualified
+  (61-day holding test) and non-qualified buckets, taxed annually at the
+  preferential and ordinary rates respectively. They are ordinary income:
+  capital losses never net against them beyond the statutory
+  ordinary-income offset.
+- Payments in lieu on shorts are paid in cash at the same yield on short
+  market value, so a long and a short in the same name net to zero and
+  every net-100 book earns the same pre-tax net dividend income as 100/0.
+  Payments on shorts closed within 45 days are added to the basis of the
+  covering shares (Pub 550); payments on shorts open longer are investment
+  interest expense, deducted against net investment income at the ordinary
+  rate with the excess carried forward (IRC 163(d)). Margin debit interest
+  is in the same bucket. Borrow fees and the management fee are not
+  deductible.
 - Wash sales are enforced by the ledger itself: disallowed losses move
   into replacement basis with holding-period tacking, whatever the policy
   layer does. The policy also avoids harvesting into a wash and waits out
@@ -28,11 +34,13 @@ Wealth accounting, stated once so every output is interpretable:
   matches the configured rate; realized alpha then varies with how well
   later weights align with later signals. It defaults to zero so leverage
   comparisons stay tax studies.
-- Margin is a strategy-level maintenance test at FINRA Rule 4210 floor
-  levels. Under the default response, a deficiency triggers forced
-  proportional deleveraging through the ledger, with transaction costs and
-  realized taxes; the alternative "flag" mode only records the deficiency
-  and its results should never be described as implementable.
+- Margin is a strategy-level maintenance test: by default a portfolio
+  margin requirement of `pm_stress` times gross market value, or the FINRA
+  Rule 4210 percentage floors under `margin_model="reg_t"`. Under the
+  default response, a deficiency triggers forced proportional deleveraging
+  through the ledger, with transaction costs and realized taxes; the
+  alternative "flag" mode only records the deficiency and its results
+  should never be described as implementable.
 """
 
 from __future__ import annotations
@@ -64,10 +72,17 @@ class PathResult:
     tracking_error: float
     max_drawdown: float
     annual_turnover: float
+    average_nav: float  # mean end-of-step NAV over the simulated path
     management_fees: float
     borrow_costs: float
     transaction_costs: float
     payments_in_lieu: float
+    payments_in_lieu_capitalized: float  # PIL added to cover basis (shorts closed <= 45 days)
+    dividends_received: float  # cash dividends on longs, before tax
+    net_dividend_income: float  # dividends_received - payments_in_lieu
+    investment_interest_deducted: float  # PIL (> 45 days) + debit interest actually deducted
+    investment_interest_benefit: float  # ordinary tax saved by that deduction
+    unused_investment_interest_carry: float
     dividend_taxes: float
     debit_interest: float
     min_margin_excess_ratio: float
@@ -98,7 +113,12 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     state = _State(cfg.starting_capital)
     side_account = 0.0
     carry_st = carry_lt = 0.0
+    carry_ii = 0.0
     year_qual_div = year_ord_div = 0.0
+    year_debit = year_interest_income = 0.0
+    pil_expensed_settled = 0.0
+    dividends_total = 0.0
+    ii_deducted_total = ii_benefit_total = 0.0
 
     benefit_used_total = 0.0
     taxes_paid_total = 0.0
@@ -120,22 +140,20 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     def nav_now() -> float:
         return state.cash + ledger.longs.market_value(prices) - ledger.shorts.market_value(prices)
 
-    # Feasibility at inception under the maintenance floors.
-    inception_req = (
-        cfg.long_maintenance * cfg.long_exposure + cfg.short_maintenance * cfg.short_exposure
-    )
+    # Feasibility at inception under the maintenance requirement.
+    long_coef, short_coef = cfg.maintenance_coefficients()
+    inception_req = long_coef * cfg.long_exposure + short_coef * cfg.short_exposure
     feasible_at_inception = inception_req <= 1.0
 
     # Feasibility scaling preserves NET exposure: an infeasible book keeps
     # its long-only core and shrinks the long/short extension equally, so
     # every book in a sweep still compares at the same market exposure
-    # (250/150 at FINRA floors becomes roughly 233/133, not 228/137).
+    # (250/150 at FINRA floors becomes roughly 233/133, not 228/137; under
+    # portfolio margin it is feasible and runs at full size).
     net_exposure = cfg.long_exposure - cfg.short_exposure
     extension = cfg.short_exposure
     if not feasible_at_inception and cfg.margin_response == "deleverage":
-        ext_max = (cfg.deleverage_buffer - cfg.long_maintenance * net_exposure) / (
-            cfg.long_maintenance + cfg.short_maintenance
-        )
+        ext_max = (cfg.deleverage_buffer - long_coef * net_exposure) / (long_coef + short_coef)
         extension = max(min(extension, ext_max), 0.0)
     eff_long = net_exposure + extension
     eff_short = extension
@@ -183,6 +201,29 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         state.cash -= cost
         return traded, cost
 
+    def investment_interest_for_year() -> float:
+        """Deductible interest accrued since the last settlement."""
+        if not cfg.deduct_investment_interest:
+            return 0.0
+        return (ledger.pil_expensed - pil_expensed_settled) + year_debit
+
+    def apply_settlement(result, outside: float) -> None:
+        """Charge the portfolio's tax to NAV and credit household savings
+        to the side account. The interest deduction first offsets the
+        portfolio's own tax bill; any excess is a household saving."""
+        nonlocal side_account, taxes_paid_total, dividend_tax_total
+        nonlocal benefit_used_total, ii_deducted_total, ii_benefit_total
+        baseline = outside * cfg.st_rate
+        gross = max(result.capital_tax - baseline, 0.0) + result.dividend_tax
+        applied = min(result.investment_interest_saving, gross)
+        state.cash -= gross - applied
+        taxes_paid_total += gross - applied
+        dividend_tax_total += result.dividend_tax
+        side_account += result.benefit_used + (result.investment_interest_saving - applied)
+        benefit_used_total += result.benefit_used
+        ii_deducted_total += result.investment_interest_deducted
+        ii_benefit_total += result.investment_interest_saving
+
     for t in range(cfg.n_steps):
         # 1. Market moves.
         step_returns = path.returns[t].copy()
@@ -212,17 +253,21 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             for lot in lots:
                 if lot.shares > 1e-9:
                     amount = lot.shares * prices[asset] * cfg.dividend_yield * dt
-                    lot.pil_accrued += amount
+                    ledger.accrue_pil(lot, amount, t)
                     pil_step += amount
         state.cash += qual_div + ord_div - fee_cost - borrow_cost - pil_step
         if state.cash > 0:
-            state.cash += state.cash * cfg.cash_rate * dt
+            interest = state.cash * cfg.cash_rate * dt
+            state.cash += interest
+            year_interest_income += interest
         elif state.cash < 0:
             debit_cost = -state.cash * cfg.debit_rate * dt
             state.cash -= debit_cost
             debit += debit_cost
+            year_debit += debit_cost
         year_qual_div += qual_div
         year_ord_div += ord_div
+        dividends_total += qual_div + ord_div
         fees += fee_cost
         borrow += borrow_cost
         pil += pil_step
@@ -256,7 +301,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             long_mv = ledger.longs.market_value(prices)
             short_mv = ledger.shorts.market_value(prices)
             nav = nav_now()
-            requirement = cfg.long_maintenance * long_mv + cfg.short_maintenance * short_mv
+            requirement = long_coef * long_mv + short_coef * short_mv
             if nav <= 0:
                 min_margin_ratio = min(min_margin_ratio, -1.0)
                 deficiency_observed = True
@@ -286,7 +331,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             if nav > 0:
                 long_mv = ledger.longs.market_value(prices)
                 short_mv = ledger.shorts.market_value(prices)
-                requirement = cfg.long_maintenance * long_mv + cfg.short_maintenance * short_mv
+                requirement = long_coef * long_mv + short_coef * short_mv
                 # Small residuals below the 1%-of-side trade threshold are
                 # tolerated; anything larger means the response failed,
                 # which is unreachable for configs the validator accepts.
@@ -315,6 +360,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
             y0, y1 = year * cfg.steps_per_year, (year + 1) * cfg.steps_per_year - 1
             st, lt = ledger.realized_totals(y0, y1)
             outside = cfg.outside_st_gain_for_year(year)
+            year_ii = investment_interest_for_year()
             result = settle_year(
                 st,
                 lt,
@@ -327,17 +373,17 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
                 cfg.ordinary_offset_limit,
                 qualified_dividends=year_qual_div,
                 ordinary_dividends=year_ord_div,
+                investment_interest=year_ii,
+                carry_investment_interest=carry_ii,
+                interest_income=year_interest_income,
             )
-            baseline = outside * cfg.st_rate
-            portfolio_tax = max(result.capital_tax - baseline, 0.0) + result.dividend_tax
-            state.cash -= portfolio_tax
-            taxes_paid_total += portfolio_tax
-            dividend_tax_total += result.dividend_tax
-            side_account += result.benefit_used
-            benefit_used_total += result.benefit_used
+            apply_settlement(result, outside)
             net_realized_pre_liq += st + lt
             carry_st, carry_lt = result.carry_st, result.carry_lt
+            carry_ii = result.carry_investment_interest
             year_qual_div = year_ord_div = 0.0
+            year_debit = year_interest_income = 0.0
+            pil_expensed_settled = ledger.pil_expensed
 
     # ------------------------------------------------------------------
     # Full liquidation AT the terminal step: the last simulated step
@@ -369,6 +415,7 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
     # Earlier full years were already settled inside the loop; on an early
     # termination nothing after final_year exists to settle.
 
+    final_ii = investment_interest_for_year()
     final = settle_year(
         st_final,
         lt_final,
@@ -381,6 +428,9 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         cfg.ordinary_offset_limit,
         qualified_dividends=year_qual_div,
         ordinary_dividends=year_ord_div,
+        investment_interest=final_ii,
+        carry_investment_interest=carry_ii,
+        interest_income=year_interest_income,
     )
     counterfactual = settle_year(
         pre_liq_st,
@@ -394,17 +444,15 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         cfg.ordinary_offset_limit,
         qualified_dividends=year_qual_div,
         ordinary_dividends=year_ord_div,
+        investment_interest=final_ii,
+        carry_investment_interest=carry_ii,
+        interest_income=year_interest_income,
     )
-    baseline = outside * cfg.st_rate
-    final_portfolio_tax = max(final.capital_tax - baseline, 0.0) + final.dividend_tax
-    state.cash -= final_portfolio_tax
-    taxes_paid_total += final_portfolio_tax
-    dividend_tax_total += final.dividend_tax
-    side_account += final.benefit_used
-    benefit_used_total += final.benefit_used
+    apply_settlement(final, outside)
 
     # Incremental household tax caused by liquidating, comparing actual
-    # after-offset tax bills directly (dividends cancel across the pair).
+    # after-offset tax bills directly (dividends cancel across the pair;
+    # the interest deduction differs only through net investment income).
     tax_with = final.household_tax - final.ordinary_offset * cfg.ordinary_rate
     tax_without = counterfactual.household_tax - counterfactual.ordinary_offset * cfg.ordinary_rate
     liquidation_tax = max(tax_with - tax_without, 0.0)
@@ -433,10 +481,17 @@ def run_path(cfg: ScenarioConfig, seed: int) -> PathResult:
         tracking_error=te,
         max_drawdown=max_dd,
         annual_turnover=annual_turnover,
+        average_nav=avg_nav,
         management_fees=fees,
         borrow_costs=borrow,
         transaction_costs=txn,
         payments_in_lieu=pil,
+        payments_in_lieu_capitalized=ledger.pil_capitalized,
+        dividends_received=dividends_total,
+        net_dividend_income=dividends_total - pil,
+        investment_interest_deducted=ii_deducted_total,
+        investment_interest_benefit=ii_benefit_total,
+        unused_investment_interest_carry=final.carry_investment_interest,
         dividend_taxes=dividend_tax_total,
         debit_interest=debit,
         min_margin_excess_ratio=float(min_margin_ratio),

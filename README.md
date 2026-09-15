@@ -11,7 +11,7 @@ A research simulator for **tax-aware long-short (TALS)** portfolio strategies: l
 
 The question it exists to answer: **when does additional long-short leverage create usable after-tax value, and when does it merely create more turnover, risk, cost, and deferred tax?**
 
-> **Status: v0.4.1, experimental research software.** The engine is synthetic
+> **Status: v0.5.0, experimental research software.** The engine is synthetic
 > and its tax accounting is a documented approximation. Results are
 > conditional on stated assumptions and are not evidence about any real
 > strategy. Do not use this for personal financial decisions.
@@ -26,23 +26,26 @@ pinned-CI run).
 ## Results at a glance
 
 The headline experiment: five books from long-only to 250/150 traded on the
-same 200 simulated market paths, zero manager alpha, $1M for 10 years, full
-liquidation at the end. Leverage multiplies harvested losses and still loses
-the race after netting, costs, risk, and the terminal tax bill:
+same 200 simulated market paths of a 500-name universe, zero manager alpha,
+$1M for 10 years, portfolio margin, full liquidation at the end. Leverage
+multiplies harvested losses and still loses the race after netting, costs,
+risk, and the terminal tax bill:
 
 ![Leverage sweep: losses grow, wealth falls, costs and risk compound](https://raw.githubusercontent.com/engineerinvestor/talsim/master/docs/leverage_sweep.png)
 
 | Book | Median after-tax wealth | Paired diff vs 100/0 | Paths beating 100/0 | Gross losses | Tax benefit used |
 |---|---:|---:|---:|---:|---:|
-| 100/0 | $1.62M | — | — | $0.77M | $111k |
-| 130/30 | $1.50M | −$118k | 29% | $2.43M | $157k |
-| 150/50 | $1.40M | −$165k | 26% | $3.15M | $185k |
-| 200/100 | $1.26M | −$324k | 26% | $4.70M | $235k |
-| 250/150 | $1.13M | −$427k | 19% | $5.54M | $263k |
+| 100/0 | $1.66M | — | — | $0.77M | $120k |
+| 130/30 | $1.59M | −$54k | 25% | $2.47M | $146k |
+| 150/50 | $1.57M | −$69k | 24% | $3.26M | $167k |
+| 200/100 | $1.52M | −$120k | 19% | $5.10M | $215k |
+| 250/150 | $1.46M | −$194k | 14% | $6.60M | $257k |
 
-Medians across 200 common-random-number paths, seed 7 (250/150 is
-infeasible at FINRA percentage floors and runs net-preserving at roughly
-233/133). 7.2x the gross losses buy 2.4x the usable tax benefit. Every number regenerates from
+Medians across 200 common-random-number paths, seed 7. 8.6x the gross
+losses buy 2.1x the usable tax benefit. The gap is less than half of what
+v0.4 reported: the 36-name universe of earlier releases produced tracking
+errors of 10 to 20%, and most of that gap was variance drag on the median
+rather than tax mechanics (see the changelog). Every number regenerates from
 `python -m talsim.cli sweep --paths 200 --seed 7` on the same platform; the
 summary, path-level results, and manifest behind this table are committed
 under [`docs/results/`](https://github.com/engineerinvestor/talsim/tree/master/docs/results) and regenerated in pinned CI, and the
@@ -80,7 +83,7 @@ For development, from a clone:
 
 ```bash
 pip install -e ".[dev]"
-pytest            # 56 tests: unit, regression, and property-based (hypothesis)
+pytest            # 71 tests: unit, regression, and property-based (hypothesis)
 ```
 
 ## Quick start
@@ -88,7 +91,7 @@ pytest            # 56 tests: unit, regression, and property-based (hypothesis)
 ```python
 from talsim import ScenarioConfig, run_sweep
 
-cfg = ScenarioConfig()  # $1M, 10y, quarterly, zero alpha, top 2026 federal rates
+cfg = ScenarioConfig()  # $1M, 10y, quarterly, 500 names, zero alpha, top 2026 federal rates
 sweeps = run_sweep(cfg, ["100/0", "130/30"], n_paths=50)
 for s in sweeps:
     print(
@@ -97,8 +100,8 @@ for s in sweeps:
         f"gross losses ${s.median('gross_losses_realized'):,.0f}",
         f"benefit used ${s.median('tax_benefit_used'):,.0f}",
     )
-# 100/0  median wealth $1,722,303 gross losses $751,035 benefit used $109,473
-# 130/30 median wealth $1,585,744 gross losses $2,562,042 benefit used $157,310
+# 100/0  median wealth $1,636,689 gross losses $753,493 benefit used $126,447
+# 130/30 median wealth $1,566,060 gross losses $2,415,247 benefit used $147,940
 ```
 
 Single-path inspection, with every assumption in one config object:
@@ -112,7 +115,7 @@ print(
     f"wealth ${r.ending_after_tax_wealth:,.0f}, TE {r.tracking_error:.1%}, "
     f"turnover {r.annual_turnover:.1f}x, washed ${r.disallowed_wash_losses:,.0f}"
 )
-# wealth $2,393,151, TE 9.7%, turnover 3.0x, washed $0
+# wealth $847,766, TE 2.2%, turnover 3.3x, washed $0
 ```
 
 Or from the command line:
@@ -162,15 +165,16 @@ More harvested losses are not more wealth. Every report distinguishes:
 4. **Tax benefit used**: the household tax actually saved against outside gains plus the $3,000 ordinary offset; the only number that deserves to be called a benefit.
 5. **Liquidation tax**: the incremental household tax caused by the terminal unwind, measured against settling the final year without liquidating.
 
-## Model mechanics (v0.4.1)
+## Model mechanics (v0.5.0)
 
 - **Wash sales are enforced in the ledger**, both directions of the window, share-matched **in acquisition order with lot splitting**: when only part of a replacement lot matches, the matched shares become their own sublot carrying the transferred basis and a tacked TAX holding clock, while their actual acquisition date (which drives the wash window, the PIL 45-day test, and dividend qualification) is preserved separately. Short-side replacements have the deferred loss subtracted from their basis (sale proceeds), never added. **The window is an exact elapsed-day comparison**: at quarterly cadence a same-step repurchase washes and the next quarter, 91 days later, legally does not. Long-term character requires MORE than 365 days, per Pub 550. The policy layer independently avoids washes: it will not harvest a freshly bought name, it waits out the window before re-entering, redistributes blocked exposure to substitute names (capped at 2x each name's own target), and risk-driven reductions of recent buys sell gain lots first.
 - **Exposure is constructed from post-trade state per side**, never signed drift, so short-to-long transitions land on target. A harvest floor prevents a side from flattening itself when every position is at a loss at once. Realized net exposure error is recorded per path.
-- **Dividends are ordinary income**, split qualified/non-qualified by a day-based holding test (61 days, a proxy for the statutory 60-days-in-121 rule, correct at any cadence), taxed annually in their own buckets; capital losses never absorb them beyond the statutory ordinary offset. **Payments in lieu accrue per short lot** and are capitalized into cover basis only when the short is closed within 45 days (Pub 550); longer-held PIL gets no tax benefit, a deliberate conservatism until an investment-interest bucket exists.
-- **Negative cash accrues debit interest** (default 6%); positive cash earns a configurable rate (default zero, deliberately conservative).
-- **Margin** is a strategy-level maintenance test at FINRA Rule 4210 percentage floors (25% long / 30% short; the rule's per-share short minima for low-priced stocks are not modeled). Feasibility scaling **preserves net exposure**: an infeasible book keeps its long-only core and shrinks the long/short extension equally, so 250/150 at floor requirements runs as roughly 233/133 (`extension_scale` reports the shrinkage) and every book in a sweep compares at the same market exposure. A deficiency during the path is cured by trading back to the compliant target fractions, with transaction costs and tax consequences; nonpositive equity ends the path in an explicit insolvent state. A "flag" mode records deficiencies without responding; its results should never be described as implementable. Actual average long and short exposures are reported per path.
+- **The market generates ex-dividend price returns**; prices never drop on an ex-date. Dividends are paid in cash at the configured yield on long market value and **payments in lieu (PIL) are paid at the same yield on short market value**, so a long and a short in the same name net to zero and every net-100 book earns the same pre-tax net dividend income as 100/0 (`dividends_received`, `payments_in_lieu`, and `net_dividend_income` are reported per path). **Dividends are ordinary income**, split qualified/non-qualified by a day-based holding test (61 days, a proxy for the statutory 60-days-in-121 rule, correct at any cadence), taxed annually in their own buckets; capital losses never absorb them beyond the statutory ordinary offset.
+- **PIL on a short closed within 45 days is capitalized into cover basis** (Pub 550). **PIL on a short open longer, plus margin debit interest, is investment interest expense** (IRC 163(d)): deducted at the ordinary rate against net investment income (interest, non-qualified dividends, and net short-term gain after netting, which includes the household's outside gains), with the excess carried forward. A loss harvester nets away its own short-term gains, so a household with small outside gains carries most of the deduction to the liquidation year. At quarterly cadence every short is open 91 days by its first possible close, so nothing capitalizes and everything is expensed. Borrow fees and the management fee are not deductible (miscellaneous itemized deductions, suspended since TCJA); qualified dividends and long-term gains count toward net investment income only under the 163(d)(4)(B) election, which is not modeled. `deduct_investment_interest=False` restores the pre-0.5 treatment.
+- **Negative cash accrues debit interest** (default 6%); positive cash earns a configurable rate (default zero, deliberately conservative). Short proceeds fund the long extension, so there is no separate short-rebate line: `borrow_cost` is the net financing spread on the extension.
+- **Margin** is a strategy-level maintenance test. The default `margin_model="portfolio"` is a risk-based requirement of `pm_stress` (15%, the regulatory stress for individual equities; brokers set higher house levels) times gross market value, the account type any book above 150/50 actually lives in: 250/150 needs 60% of equity and runs at full size. `margin_model="reg_t"` applies the FINRA Rule 4210 percentage floors instead (25% long / 30% short; the rule's per-share short minima for low-priced stocks and the 50% initial requirement are not modeled). Feasibility scaling **preserves net exposure**: an infeasible book keeps its long-only core and shrinks the long/short extension equally, so 250/150 at Reg T floors runs as roughly 233/133 (`extension_scale` reports the shrinkage) and every book in a sweep compares at the same market exposure. A deficiency during the path is cured by trading back to the compliant target fractions, with transaction costs and tax consequences; nonpositive equity ends the path in an explicit insolvent state. A "flag" mode records deficiencies without responding; its results should never be described as implementable. Actual average long and short exposures are reported per path.
 - **Alpha**, when configured, enters as signal-proportional return drift calibrated at inception; the equal-weight 100/0 baseline has no active positions and receives none.
-- **Tracking error** is measured against an investable equal-weight portfolio of the same universe, and includes cost and tax drag. **Turnover** is one-sided (traded dollars / 2) over average NAV per year, excluding initial construction and terminal liquidation.
+- **Universe and tracking error.** The default universe is 500 names (25% idiosyncratic vol, four sectors). The rank tilt puts every name in one tail or the other, so at 36 names a 150/50 held 13% of NAV in its largest position and carried active gross of 1.9 against equal weight, with a realized tracking error near 10% (20% for 250/150); at 500 names the largest position is under 2% of NAV and tracking error is about 1% for 100/0, 3% for 150/50, and 6% for 250/150. Tracking error is measured against an investable equal-weight portfolio of the same universe, and includes cost and tax drag. Most of the 36-name leverage penalty was variance drag on the median from that tracking error, not tax. The per-name no-trade band scales with the equal-weight slot (0.18 / n_assets of NAV, 0.5% at 36 names); a band fixed in NAV terms stops a large universe from trading at all. **Turnover** is one-sided (traded dollars / 2) over average NAV per year, excluding initial construction and terminal liquidation.
 
 ## Remaining simplifications (read before citing any number)
 
@@ -205,6 +209,28 @@ API documentation is published from the module docstrings at
 **https://engineerinvestor.github.io/talsim/** on every push to master.
 
 ## Changelog
+
+**0.5.0** — Fourth correctness release following a second external
+review, from a practitioner who runs these strategies. Margin moves to a
+portfolio-margin requirement by default (15% of gross market value), so
+250/150 runs at full size instead of the Reg T-floor 233/133 (still
+available as `margin_model="reg_t"`). Payments in lieu on shorts open more
+than 45 days, plus debit interest, are now investment interest expense
+deducted against net investment income with carryforward (IRC 163(d)); at
+quarterly cadence the 45-day capitalization branch never fired, so 100% of
+PIL previously got no tax treatment at all. Dividends received and net
+dividend income are reported, documenting that longs and shorts earn and
+pay the same yield and that PIL is not a pre-tax drag. The default universe
+grows from 36 to 500 names: the 36-name rank tilt held up to 22% of NAV in
+one name and produced tracking errors of 10 to 20%, and most of the
+headline leverage penalty was variance drag from that construction rather
+than tax mechanics. The per-name rebalance band now scales with the
+equal-weight slot; the fixed 0.5%-of-NAV band exceeded every position at
+500 names and silently left a 100/0 book in cash. `average_nav` is
+reported per path. The legacy configuration (`n_assets=36,
+rebalance_band=0.005, margin_model="reg_t",
+deduct_investment_interest=False`) reproduces 0.4.1 results and is pinned
+in the test suite. Results produced by 0.4.x should be discarded.
 
 **0.4.1** — Performance release; results unchanged. `target_weights`
 evaluates its scale grid in one vectorized pass (same grid and
@@ -268,7 +294,7 @@ If you use talsim in academic work, please cite it:
   title   = {talsim: a research simulator for tax-aware long-short
              portfolio strategies},
   year    = {2026},
-  version = {0.4.1},
+  version = {0.5.0},
   url     = {https://github.com/engineerinvestor/talsim},
   license = {MIT},
   note    = {Synthetic-market research software; results are conditional
