@@ -5,7 +5,7 @@ type: software
 authors:
   - name: "Engineer Investor"
 version: 0.5.0
-date-released: 2026-09-14
+date-released: 2026-09-26
 url: "https://github.com/engineerinvestor/talsim"
 repository-code: "https://github.com/engineerinvestor/talsim"
 license: MIT
